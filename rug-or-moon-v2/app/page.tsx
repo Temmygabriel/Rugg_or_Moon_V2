@@ -97,7 +97,7 @@ export default function RugOrMoon() {
         args: [],
         account,
       });
-      const newId = count.toString();
+      const newId = (count ?? 0).toString();
       setGameId(newId);
       await fetchGame(newId);
     } catch (err: any) {

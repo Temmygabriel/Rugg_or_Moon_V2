@@ -126,6 +126,7 @@ export default function RugOrMoon() {
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevHistoryLen = useRef<number>(0);
+  const resultDismissed = useRef<number>(0); // tracks which history index was dismissed
 
   // ─── POLLING ─────────────────────────────────────────────────────────────
   const poll = useCallback(async () => {
@@ -137,8 +138,10 @@ export default function RugOrMoon() {
       const latest = state.last_round_result;
       if (latest) {
         prevHistoryLen.current = state.history.length;
-        setLastResult(latest);
-        setShowResult(true);
+        if (state.history.length > resultDismissed.current) {
+          setLastResult(latest);
+          setShowResult(true);
+        }
         setSubmitted(false);
         setPick(null);
         setArgument("");
@@ -268,6 +271,7 @@ export default function RugOrMoon() {
     setShowResult(false);
     setLastResult(null);
     prevHistoryLen.current = 0;
+    resultDismissed.current = 0;
     if (pollRef.current) clearInterval(pollRef.current);
   }
 
@@ -411,6 +415,18 @@ export default function RugOrMoon() {
                 </button>
 
                 {error && <div style={{ marginTop:"1rem", padding:"0.75rem", background:"rgba(239,68,68,0.15)", border:"1px solid rgba(239,68,68,0.4)", borderRadius:10, color:"#fca5a5", fontSize:"0.875rem" }}>{error}</div>}
+              </div>
+            </div>
+          )}
+
+          {/* ── LOADING (solo game being set up) ─────────── */}
+          {screen === "game" && gameState && !gameState.current_project && (
+            <div className="screen" style={{ textAlign:"center", maxWidth:560, margin:"0 auto", paddingTop:"4rem" }}>
+              <div style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:24, padding:"3rem 2rem" }}>
+                <div className="spin" style={{ display:"inline-block", width:56, height:56, border:"4px solid rgba(155,106,246,0.3)", borderTopColor:"#9B6AF6", borderRadius:"50%", marginBottom:"2rem" }} />
+                <h2 style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"2rem", marginBottom:"0.75rem" }}>AI Oracle Cooking...</h2>
+                <p style={{ color:"#9ca3af", marginBottom:"0.5rem" }}>Generating your first crypto project on-chain.</p>
+                <p style={{ color:"#6b7280", fontSize:"0.8rem", fontFamily:"DM Mono" }}>This takes 30–60 seconds. Hang tight 🔥</p>
               </div>
             </div>
           )}
@@ -610,10 +626,10 @@ export default function RugOrMoon() {
 
         {/* ── ROUND RESULT OVERLAY ───────────────────────── */}
         {showResult && lastResult && (
-          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", backdropFilter:"blur(8px)", zIndex:50, display:"flex", alignItems:"center", justifyContent:"center", padding:"1.5rem" }} onClick={() => setShowResult(false)}>
+          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", backdropFilter:"blur(8px)", zIndex:50, display:"flex", alignItems:"center", justifyContent:"center", padding:"1.5rem" }} onClick={() => { resultDismissed.current = prevHistoryLen.current; setShowResult(false); }}>
             <div className="scale-in" style={{ background:"rgba(20,10,40,0.95)", border:"2px solid rgba(155,106,246,0.5)", borderRadius:24, padding:"2.5rem", maxWidth:560, width:"100%", textAlign:"center", position:"relative" }} onClick={e => e.stopPropagation()}>
               {/* X close button */}
-              <button onClick={() => setShowResult(false)} style={{ position:"absolute", top:16, left:16, background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:8, color:"white", width:32, height:32, cursor:"pointer", fontSize:"1rem", display:"flex", alignItems:"center", justifyContent:"center" }}>✕</button>
+              <button onClick={() => { resultDismissed.current = prevHistoryLen.current; setShowResult(false); }} style={{ position:"absolute", top:16, left:16, background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:8, color:"white", width:32, height:32, cursor:"pointer", fontSize:"1rem", display:"flex", alignItems:"center", justifyContent:"center" }}>✕</button>
               <div style={{ position:"absolute", top:16, right:16 }}>
                 <img
                   src={lastResult.outcome === "MOON" ? "/images/mochi-stonks-up.png" : "/images/mochi-stonks-down.png"}
@@ -654,7 +670,7 @@ export default function RugOrMoon() {
               <div style={{ fontSize:"0.85rem", color:"#9ca3af", fontStyle:"italic", marginBottom:"1.5rem" }}>{lastResult.reasoning}</div>
 
               <button
-                onClick={() => setShowResult(false)}
+                onClick={() => { resultDismissed.current = prevHistoryLen.current; setShowResult(false); }}
                 style={{ width:"100%", padding:"1rem", background:"linear-gradient(to right, #E37DF7, #9B6AF6)", border:"none", borderRadius:12, color:"white", fontFamily:"Outfit", fontWeight:700, fontSize:"1.1rem", cursor:"pointer" }}
               >
                 {gameState?.status === "finished" ? "See Final Results →" : "Next Round →"}

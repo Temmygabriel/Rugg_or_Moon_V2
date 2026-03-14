@@ -640,55 +640,64 @@ export default function RugOrMoon() {
 
         {/* ── ROUND RESULT OVERLAY ───────────────────────── */}
         {showResult && lastResult && (
-          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", backdropFilter:"blur(8px)", zIndex:50, display:"flex", alignItems:"center", justifyContent:"center", padding:"1.5rem" }} onClick={() => { resultDismissed.current = prevHistoryLen.current; setShowResult(false); }}>
-            <div className="scale-in" style={{ background:"rgba(20,10,40,0.95)", border:"2px solid rgba(155,106,246,0.5)", borderRadius:24, padding:"2.5rem", maxWidth:560, width:"100%", textAlign:"center", position:"relative" }} onClick={e => e.stopPropagation()}>
-              {/* X close button */}
-              <button onClick={() => { resultDismissed.current = prevHistoryLen.current; setShowResult(false); }} style={{ position:"absolute", top:16, left:16, background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:8, color:"white", width:32, height:32, cursor:"pointer", fontSize:"1rem", display:"flex", alignItems:"center", justifyContent:"center" }}>✕</button>
-              <div style={{ position:"absolute", top:16, right:16 }}>
+          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.88)", backdropFilter:"blur(8px)", zIndex:50, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"1rem", overflowY:"auto" }} onClick={() => { resultDismissed.current = prevHistoryLen.current; setShowResult(false); }}>
+            <div className="scale-in" style={{ background:"rgba(20,10,40,0.98)", border:"2px solid rgba(155,106,246,0.5)", borderRadius:20, padding:"1.25rem", maxWidth:500, width:"100%", textAlign:"center", position:"relative", marginTop:"1rem", marginBottom:"1rem" }} onClick={e => e.stopPropagation()}>
+
+              {/* Header row: X button + title + mochi */}
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"1rem" }}>
+                <button
+                  onClick={() => { resultDismissed.current = prevHistoryLen.current; setShowResult(false); }}
+                  style={{ background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:8, color:"white", width:32, height:32, cursor:"pointer", fontSize:"1rem", flexShrink:0 }}
+                >✕</button>
+                <span style={{ fontFamily:"Outfit", fontWeight:900, fontSize:"1.1rem" }}>Round Result</span>
                 <img
                   src={lastResult.outcome === "MOON" ? "/images/mochi-stonks-up.png" : "/images/mochi-stonks-down.png"}
-                  alt="Mochi"
-                  style={{ width:72, height:72 }}
+                  alt=""
+                  style={{ width:36, height:36, flexShrink:0 }}
                   onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                 />
               </div>
 
-              <h2 style={{ fontFamily:"Outfit", fontWeight:900, fontSize:"2rem", marginBottom:"0.75rem" }}>Round Result</h2>
-
-              <div style={{ fontFamily:"Outfit", fontWeight:900, fontSize:"3rem", marginBottom:"1rem", color: lastResult.outcome === "MOON" ? "#eab308" : "#ef4444" }}>
+              {/* RUG or MOON verdict */}
+              <div style={{ fontFamily:"Outfit", fontWeight:900, fontSize:"2.2rem", marginBottom:"0.75rem", color: lastResult.outcome === "MOON" ? "#eab308" : "#ef4444" }}>
                 {lastResult.outcome === "MOON" ? "🚀 TO THE MOON!" : "🪤 IT'S A RUG!"}
               </div>
 
-              <div style={{ background:"rgba(0,0,0,0.4)", borderRadius:12, padding:"1rem", marginBottom:"1rem" }}>
-                <p style={{ color:"#d1d5db", fontSize:"0.9rem", lineHeight:1.6 }}>{lastResult.explanation}</p>
+              {/* Explanation */}
+              <div style={{ background:"rgba(0,0,0,0.4)", borderRadius:10, padding:"0.75rem", marginBottom:"0.75rem" }}>
+                <p style={{ color:"#d1d5db", fontSize:"0.82rem", lineHeight:1.6 }}>{lastResult.explanation}</p>
               </div>
 
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:"1rem" }}>
+              {/* Player picks */}
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:"0.75rem" }}>
                 {[
                   { name: gameState?.player1_name, pick: lastResult.player1_pick, arg: lastResult.player1_arg },
                   { name: gameState?.player2_name, pick: lastResult.player2_pick, arg: lastResult.player2_arg },
                 ].map((p, i) => (
-                  <div key={i} style={{ background:"rgba(255,255,255,0.05)", borderRadius:12, padding:"1rem", textAlign:"left" }}>
-                    <div style={{ fontSize:"0.75rem", color:"#9ca3af", marginBottom:"0.25rem" }}>{p.name}</div>
-                    <div style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"1.25rem", marginBottom:"0.25rem", color: p.pick === "MOON" ? "#eab308" : "#ef4444" }}>
+                  <div key={i} style={{ background:"rgba(255,255,255,0.05)", borderRadius:10, padding:"0.75rem", textAlign:"left" }}>
+                    <div style={{ fontSize:"0.7rem", color:"#9ca3af", marginBottom:"0.2rem", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name}</div>
+                    <div style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"1rem", marginBottom:"0.2rem", color: p.pick === "MOON" ? "#eab308" : "#ef4444" }}>
                       {p.pick === "MOON" ? "🚀 MOON" : "🪤 RUG"}
                     </div>
-                    <div style={{ fontSize:"0.75rem", color:"#9ca3af", fontStyle:"italic" }}>"{p.arg}"</div>
+                    <div style={{ fontSize:"0.7rem", color:"#9ca3af", fontStyle:"italic", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical", overflow:"hidden" }}>"{p.arg}"</div>
                   </div>
                 ))}
               </div>
 
-              <div style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"1.1rem", marginBottom:"0.5rem" }}>
-                Round Winner: <span style={{ color:"#9B6AF6" }}>{lastResult.winner}</span>
+              {/* Winner */}
+              <div style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"1rem", marginBottom:"0.25rem" }}>
+                🏆 Round Winner: <span style={{ color:"#9B6AF6" }}>{lastResult.winner}</span>
               </div>
-              <div style={{ fontSize:"0.85rem", color:"#9ca3af", fontStyle:"italic", marginBottom:"1.5rem" }}>{lastResult.reasoning}</div>
+              <div style={{ fontSize:"0.78rem", color:"#9ca3af", fontStyle:"italic", marginBottom:"1rem" }}>{lastResult.reasoning}</div>
 
+              {/* Action button — always visible */}
               <button
                 onClick={() => { resultDismissed.current = prevHistoryLen.current; setShowResult(false); }}
-                style={{ width:"100%", padding:"1rem", background:"linear-gradient(to right, #E37DF7, #9B6AF6)", border:"none", borderRadius:12, color:"white", fontFamily:"Outfit", fontWeight:700, fontSize:"1.1rem", cursor:"pointer" }}
+                style={{ width:"100%", padding:"0.9rem", background:"linear-gradient(to right, #E37DF7, #9B6AF6)", border:"none", borderRadius:12, color:"white", fontFamily:"Outfit", fontWeight:700, fontSize:"1rem", cursor:"pointer" }}
               >
                 {gameState?.status === "finished" ? "See Final Results →" : "Next Round →"}
               </button>
+
             </div>
           </div>
         )}

@@ -8,7 +8,7 @@ import { TransactionStatus } from "genlayer-js/types";
 // ─────────────────────────────────────────────────────────────────────────────
 //  🔧 PASTE YOUR CONTRACT ADDRESS HERE
 // ─────────────────────────────────────────────────────────────────────────────
-const CONTRACT_ADDRESS = "0xE9C5691AA890aB01f47a85Cc47BfE45763bB8d55";
+const CONTRACT_ADDRESS = "PASTE_YOUR_CONTRACT_ADDRESS_HERE";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const POLL_INTERVAL = 4000;
@@ -343,14 +343,28 @@ export default function RugOrMoon() {
 
           {/* Header */}
           <header style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"3rem" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:16 }}>
+            <div
+              onClick={() => { if (screen !== "home") { reset(); } }}
+              style={{ display:"flex", alignItems:"center", gap:16, cursor: screen !== "home" ? "pointer" : "default", opacity: 1 }}
+              title={screen !== "home" ? "Go to Home" : ""}
+            >
               <svg width="40" height="40" viewBox="0 0 100 100" fill="none"><path d="M50 10 L90 90 L10 90 Z" fill="white" /></svg>
               <div>
                 <div style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"1.25rem" }}>GenLayer</div>
                 <div style={{ fontSize:"0.75rem", color:"#9ca3af" }}>Playverse Challenge</div>
               </div>
             </div>
-            <div style={{ fontSize:"0.75rem", color:"#9ca3af" }}>Powered by AI Oracle</div>
+            <div style={{ display:"flex", alignItems:"center", gap:16 }}>
+              {screen !== "home" && (
+                <button
+                  onClick={reset}
+                  style={{ padding:"0.4rem 1rem", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:8, color:"#9ca3af", fontFamily:"Outfit", fontWeight:600, fontSize:"0.8rem", cursor:"pointer" }}
+                >
+                  🏠 Home
+                </button>
+              )}
+              <div style={{ fontSize:"0.75rem", color:"#9ca3af" }}>Powered by AI Oracle</div>
+            </div>
           </header>
 
           {/* ── HOME ──────────────────────────────────────── */}

@@ -352,8 +352,12 @@ export default function RugOrMoon() {
           {/* ── HOME ──────────────────────────────────────── */}
           {screen === "home" && (
             <div className="screen" style={{ textAlign:"center" }}>
-              <div style={{ marginBottom:"4rem" }}>
-                <h1 className="shimmer" style={{ fontFamily:"Outfit", fontWeight:900, fontSize:"clamp(4rem,12vw,8rem)", background:"linear-gradient(to right, #E37DF7, #9B6AF6, #110FFF)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", marginBottom:"1rem" }}>
+              <div style={{ marginBottom:"4rem", position:"relative" }}>
+                {/* Mascot */}
+                <div className="float" style={{ position:"absolute", right:"-2rem", top:"50%", transform:"translateY(-50%)", opacity:0.85 }}>
+                  <img src="/images/mochi-main.png" alt="Mochi" style={{ width:180, height:"auto", filter:"drop-shadow(0 0 30px rgba(227,125,247,0.4))" }} onError={(e)=>{(e.target as HTMLImageElement).parentElement!.style.display="none"}} />
+                </div>
+                <h1 className="shimmer" style={{ fontFamily:"Outfit", fontWeight:900, fontSize:"clamp(2.5rem,8vw,7rem)", background:"linear-gradient(to right, #E37DF7, #9B6AF6, #110FFF)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", marginBottom:"1rem", whiteSpace:"nowrap" }}>
                   RUG OR MOON
                 </h1>
                 <p style={{ fontSize:"1.25rem", color:"#d1d5db", marginBottom:"0.5rem" }}>The Ultimate Web3 Degen Party Game</p>
@@ -533,25 +537,71 @@ export default function RugOrMoon() {
 
           {/* ── GAME OVER ──────────────────────────────────── */}
           {screen === "gameOver" && gameState && (
-            <div className="screen" style={{ textAlign:"center", maxWidth:560, margin:"0 auto" }}>
-              <div style={{ background:"rgba(255,255,255,0.07)", border:"2px solid rgba(255,255,255,0.15)", borderRadius:24, padding:"3rem 2rem" }}>
-                <h2 className="shimmer" style={{ fontFamily:"Outfit", fontWeight:900, fontSize:"3.5rem", background:"linear-gradient(to right, #E37DF7, #9B6AF6, #110FFF)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", marginBottom:"0.5rem" }}>
-                  🎉 GAME OVER 🎉
-                </h2>
-                <p style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"2rem", marginBottom:"2rem" }}>{gameState.game_winner} Wins!</p>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:"2rem" }}>
-                  <div>
-                    <div style={{ color:"#9ca3af", marginBottom:"0.5rem" }}>{gameState.player1_name}</div>
-                    <div style={{ fontFamily:"DM Mono", fontWeight:700, fontSize:"3.5rem" }}>{gameState.player1_score}</div>
-                  </div>
-                  <div>
-                    <div style={{ color:"#9ca3af", marginBottom:"0.5rem" }}>{gameState.player2_name}</div>
-                    <div style={{ fontFamily:"DM Mono", fontWeight:700, fontSize:"3.5rem" }}>{gameState.player2_score}</div>
-                  </div>
+            <div className="screen" style={{ textAlign:"center", maxWidth:600, margin:"0 auto" }}>
+              <div style={{ background:"rgba(255,255,255,0.07)", border:"2px solid rgba(155,106,246,0.4)", borderRadius:24, padding:"3rem 2rem", position:"relative", overflow:"hidden" }}>
+                {/* Winner mascot */}
+                <div style={{ position:"absolute", top:16, right:16, opacity:0.6 }}>
+                  <img src="/images/mochi-stonks-up.png" alt="Mochi" style={{ width:80, height:80 }} onError={(e)=>{(e.target as HTMLImageElement).style.display="none"}} />
                 </div>
-                <button onClick={reset} style={{ padding:"1rem 2.5rem", background:"linear-gradient(to right, #E37DF7, #9B6AF6)", border:"none", borderRadius:12, color:"white", fontFamily:"Outfit", fontWeight:700, fontSize:"1.1rem", cursor:"pointer" }}>
-                  Play Again
-                </button>
+
+                <div style={{ fontSize:"4rem", marginBottom:"0.5rem" }}>
+                  {gameState.game_winner === playerName ? "🏆" : "💀"}
+                </div>
+
+                <h2 className="shimmer" style={{ fontFamily:"Outfit", fontWeight:900, fontSize:"3rem", background:"linear-gradient(to right, #E37DF7, #9B6AF6, #110FFF)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", marginBottom:"0.5rem" }}>
+                  {gameState.game_winner === playerName ? "YOU WIN!" : "GAME OVER"}
+                </h2>
+
+                <p style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"1.5rem", marginBottom:"0.5rem", color:"#d1d5db" }}>
+                  {gameState.game_winner} takes the crown 👑
+                </p>
+                <p style={{ fontSize:"0.875rem", color:"#6b7280", marginBottom:"2rem" }}>
+                  {gameState.game_winner === playerName ? "The Oracle has spoken in your favour. Degen instincts on point." : "The Oracle has spoken. The degen gods were not with you today."}
+                </p>
+
+                {/* Final scores */}
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:"2rem" }}>
+                  {[
+                    { name: gameState.player1_name, score: gameState.player1_score },
+                    { name: gameState.player2_name, score: gameState.player2_score },
+                  ].map((p, i) => (
+                    <div key={i} style={{ background: p.name === gameState.game_winner ? "rgba(155,106,246,0.15)" : "rgba(255,255,255,0.04)", border: p.name === gameState.game_winner ? "1px solid rgba(155,106,246,0.5)" : "1px solid rgba(255,255,255,0.08)", borderRadius:16, padding:"1.25rem" }}>
+                      <div style={{ fontSize:"0.8rem", color:"#9ca3af", marginBottom:"0.25rem" }}>{p.name}</div>
+                      <div style={{ fontFamily:"DM Mono", fontWeight:700, fontSize:"3rem", color: p.name === gameState.game_winner ? "#9B6AF6" : "#6b7280" }}>{p.score}</div>
+                      {p.name === gameState.game_winner && <div style={{ fontSize:"0.75rem", color:"#9B6AF6", marginTop:"0.25rem" }}>👑 Winner</div>}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Round history */}
+                {gameState.history.length > 0 && (
+                  <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:12, padding:"1rem", marginBottom:"2rem", textAlign:"left", maxHeight:160, overflowY:"auto" }}>
+                    <div style={{ fontSize:"0.7rem", color:"#6b7280", fontFamily:"DM Mono", textTransform:"uppercase", marginBottom:"0.75rem" }}>Match History</div>
+                    {gameState.history.map((h, i) => (
+                      <div key={i} style={{ display:"flex", alignItems:"center", gap:"0.5rem", marginBottom:"0.4rem", fontSize:"0.8rem" }}>
+                        <span style={{ color:"#6b7280", fontFamily:"DM Mono", minWidth:60 }}>Round {i+1}</span>
+                        <span style={{ color: h.outcome === "MOON" ? "#eab308" : "#ef4444" }}>{h.outcome === "MOON" ? "🚀" : "🪤"}</span>
+                        <span style={{ color:"#9B6AF6", fontWeight:700 }}>{h.winner} won</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Action buttons */}
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                  <button
+                    onClick={reset}
+                    style={{ padding:"1rem", background:"linear-gradient(to right, #E37DF7, #9B6AF6)", border:"none", borderRadius:12, color:"white", fontFamily:"Outfit", fontWeight:700, fontSize:"1rem", cursor:"pointer" }}
+                  >
+                    🎮 Play Again
+                  </button>
+                  <button
+                    onClick={() => { window.location.href = "/"; }}
+                    style={{ padding:"1rem", background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:12, color:"white", fontFamily:"Outfit", fontWeight:700, fontSize:"1rem", cursor:"pointer" }}
+                  >
+                    🏠 Home
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -560,8 +610,10 @@ export default function RugOrMoon() {
 
         {/* ── ROUND RESULT OVERLAY ───────────────────────── */}
         {showResult && lastResult && (
-          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", backdropFilter:"blur(8px)", zIndex:50, display:"flex", alignItems:"center", justifyContent:"center", padding:"1.5rem" }}>
-            <div className="scale-in" style={{ background:"rgba(20,10,40,0.95)", border:"2px solid rgba(155,106,246,0.5)", borderRadius:24, padding:"2.5rem", maxWidth:560, width:"100%", textAlign:"center", position:"relative" }}>
+          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", backdropFilter:"blur(8px)", zIndex:50, display:"flex", alignItems:"center", justifyContent:"center", padding:"1.5rem" }} onClick={() => setShowResult(false)}>
+            <div className="scale-in" style={{ background:"rgba(20,10,40,0.95)", border:"2px solid rgba(155,106,246,0.5)", borderRadius:24, padding:"2.5rem", maxWidth:560, width:"100%", textAlign:"center", position:"relative" }} onClick={e => e.stopPropagation()}>
+              {/* X close button */}
+              <button onClick={() => setShowResult(false)} style={{ position:"absolute", top:16, left:16, background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:8, color:"white", width:32, height:32, cursor:"pointer", fontSize:"1rem", display:"flex", alignItems:"center", justifyContent:"center" }}>✕</button>
               <div style={{ position:"absolute", top:16, right:16 }}>
                 <img
                   src={lastResult.outcome === "MOON" ? "/images/mochi-stonks-up.png" : "/images/mochi-stonks-down.png"}

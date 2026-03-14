@@ -5,7 +5,7 @@ import { createClient, createAccount } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 
 // ⚡ PASTE YOUR CONTRACT ADDRESS HERE ⚡
-const CONTRACT_ADDRESS = "0xfe3adceD769e7c5B79AE42cF3185895b4fee441B";
+const CONTRACT_ADDRESS = "0xbcB9564dA238D9098891102bA6540E274aDFC793";
 
 const client = createClient({
   chain: studionet,
@@ -115,6 +115,7 @@ export default function RugOrMoon() {
     setLoading(true);
     setError("");
     try {
+      // Step 1: create game (instant, no AI)
       await client.writeContract({
         address: CONTRACT_ADDRESS as `0x${string}`,
         functionName: "create_solo_game",
@@ -124,6 +125,14 @@ export default function RugOrMoon() {
       });
       const newId = await getNewGameId();
       setGameId(newId);
+      // Step 2: start solo — AI generates first project (takes ~30-60s)
+      await client.writeContract({
+        address: CONTRACT_ADDRESS as `0x${string}`,
+        functionName: "start_solo",
+        args: [parseInt(newId)],
+        account,
+        value: 0n,
+      });
       await fetchGame(newId);
     } catch (err: any) {
       setError(err.message || "Failed to create solo game");
@@ -269,14 +278,14 @@ export default function RugOrMoon() {
                 disabled={loading}
                 className="py-3 px-4 bg-gradient-to-r from-[#E37DF7] to-[#9B6AF6] rounded-xl font-bold font-['Outfit'] hover:opacity-90 transition-opacity disabled:opacity-50 text-sm"
               >
-                {loading ? "Creating..." : "👥 Play with Friend"}
+                {loading ? "⏳ Creating (2-5 min)..." : "👥 Play with Friend"}
               </button>
               <button
                 onClick={createSoloGame}
                 disabled={loading}
                 className="py-3 px-4 bg-gradient-to-r from-[#110FFF] to-[#9B6AF6] rounded-xl font-bold font-['Outfit'] hover:opacity-90 transition-opacity disabled:opacity-50 text-sm"
               >
-                {loading ? "Creating..." : "🤖 Play vs AI"}
+                {loading ? "⏳ Creating (2-5 min)..." : "🤖 Play vs AI"}
               </button>
             </div>
 
@@ -314,6 +323,19 @@ export default function RugOrMoon() {
                 {error}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Waiting for project generation (solo) */}
+        {gameState?.status === "waiting_project" && (
+          <div className="max-w-2xl mx-auto text-center">
+            <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-12 shadow-2xl">
+              <div className="mb-8">
+                <div className="inline-block w-16 h-16 border-4 border-[#9B6AF6] border-t-transparent rounded-full animate-spin" />
+              </div>
+              <h2 className="text-3xl font-bold mb-4 font-['Outfit']">AI Oracle Cooking...</h2>
+              <p className="text-gray-400 font-['Switzer']">Generating your first crypto project on-chain. This takes 30-60 seconds.</p>
+            </div>
           </div>
         )}
 

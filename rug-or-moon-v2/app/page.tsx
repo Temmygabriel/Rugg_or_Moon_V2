@@ -8,7 +8,7 @@ import { TransactionStatus } from "genlayer-js/types";
 // ─────────────────────────────────────────────────────────────────────────────
 //  🔧 PASTE YOUR CONTRACT ADDRESS HERE
 // ─────────────────────────────────────────────────────────────────────────────
-const CONTRACT_ADDRESS = "PASTE_YOUR_CONTRACT_ADDRESS_HERE";
+const CONTRACT_ADDRESS = "0xE9C5691AA890aB01f47a85Cc47BfE45763bB8d55";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const POLL_INTERVAL = 4000;

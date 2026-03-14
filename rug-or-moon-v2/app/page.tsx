@@ -37,7 +37,7 @@ interface GameState {
     player1_pick: string;
     player2_pick: string;
   };
-  winner?: string;
+  game_winner?: string;
 }
 
 export default function RugOrMoon() {
@@ -49,6 +49,7 @@ export default function RugOrMoon() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showResult, setShowResult] = useState(false);
+  const [lastSeenResult, setLastSeenResult] = useState<string | null>(null);
 
   const fetchGame = async (id: string) => {
     try {
@@ -60,17 +61,21 @@ export default function RugOrMoon() {
       });
       const parsed = JSON.parse(result as string);
       setGameState(parsed);
-      
-      // Auto-show result overlay if round just finished
-      if (parsed.last_round_result && !showResult) {
-        setShowResult(true);
+
+      // Show result overlay only when a new result arrives
+      if (parsed.last_round_result) {
+        const resultKey = parsed.last_round_result.winner + parsed.current_round;
+        if (resultKey !== lastSeenResult) {
+          setShowResult(true);
+          setLastSeenResult(resultKey);
+        }
       }
     } catch (err) {
       console.error(err);
     }
   };
 
-  const createGame = async (singlePlayer: boolean = false) => {
+  const createGame = async () => {
     if (!playerName.trim()) {
       setError("Enter your name first!");
       return;
@@ -78,15 +83,23 @@ export default function RugOrMoon() {
     setLoading(true);
     setError("");
     try {
-      const result = await client.writeContract({
+      await client.writeContract({
         address: CONTRACT_ADDRESS as `0x${string}`,
         functionName: "create_game",
-        args: [playerName.trim(), singlePlayer],
+        args: [playerName.trim()],
+        account,
+        value: 0n,
+      });
+      // Fetch game count to get the new game ID
+      const count = await client.readContract({
+        address: CONTRACT_ADDRESS as `0x${string}`,
+        functionName: "get_game_count",
+        args: [],
         account,
       });
-      const parsed = JSON.parse(result as string);
-      setGameId(parsed.game_id.toString());
-      await fetchGame(parsed.game_id.toString());
+      const newId = count.toString();
+      setGameId(newId);
+      await fetchGame(newId);
     } catch (err: any) {
       setError(err.message || "Failed to create game");
     } finally {
@@ -107,6 +120,7 @@ export default function RugOrMoon() {
         functionName: "join_game",
         args: [parseInt(gameId), playerName.trim()],
         account,
+        value: 0n,
       });
       await fetchGame(gameId);
     } catch (err: any) {
@@ -129,6 +143,7 @@ export default function RugOrMoon() {
         functionName: "submit_pick",
         args: [parseInt(gameId), playerName, pick, argument.trim()],
         account,
+        value: 0n,
       });
       setPick(null);
       setArgument("");
@@ -178,10 +193,9 @@ export default function RugOrMoon() {
       </div>
 
       <div className="relative z-10 max-w-6xl mx-auto px-6 py-8">
-        {/* Header with Mochi */}
+        {/* Header */}
         <header className="flex items-center justify-between mb-12">
           <div className="flex items-center gap-4">
-            {/* GenLayer logo */}
             <svg className="w-10 h-10" viewBox="0 0 100 100" fill="none">
               <path d="M50 10 L90 90 L10 90 Z" fill="white" />
             </svg>
@@ -195,17 +209,8 @@ export default function RugOrMoon() {
           </div>
         </header>
 
-        {/* Hero section with Mochi mascot */}
-        <div className="text-center mb-16 relative">
-          {/* Mochi mascot floating on the side */}
-          <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-80 animate-float hidden lg:block">
-            <img 
-              src="/images/mochi-main.png" 
-              alt="Mochi mascot" 
-              className="w-48 h-auto drop-shadow-2xl"
-            />
-          </div>
-
+        {/* Hero */}
+        <div className="text-center mb-16">
           <h1 className="text-6xl md:text-8xl font-bold mb-4 font-['Outfit'] bg-gradient-to-r from-[#E37DF7] via-[#9B6AF6] to-[#110FFF] bg-clip-text text-transparent animate-shimmer">
             RUG OR MOON
           </h1>
@@ -221,7 +226,7 @@ export default function RugOrMoon() {
         {!gameState && (
           <div className="max-w-md mx-auto bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-8 shadow-2xl">
             <h2 className="text-2xl font-bold mb-6 font-['Outfit'] text-center">Start Playing</h2>
-            
+
             <input
               type="text"
               placeholder="Your name..."
@@ -230,25 +235,16 @@ export default function RugOrMoon() {
               className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-xl mb-4 font-['Switzer'] focus:outline-none focus:border-[#9B6AF6] transition-colors"
             />
 
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <button
-                onClick={() => createGame(false)}
-                disabled={loading}
-                className="py-3 px-4 bg-gradient-to-r from-[#E37DF7] to-[#9B6AF6] rounded-xl font-bold font-['Outfit'] hover:opacity-90 transition-opacity disabled:opacity-50"
-              >
-                {loading ? "Creating..." : "Play with Friend"}
-              </button>
-              <button
-                onClick={() => createGame(true)}
-                disabled={loading}
-                className="py-3 px-4 bg-gradient-to-r from-[#110FFF] to-[#9B6AF6] rounded-xl font-bold font-['Outfit'] hover:opacity-90 transition-opacity disabled:opacity-50"
-              >
-                {loading ? "Creating..." : "Play Solo 🤖"}
-              </button>
-            </div>
+            <button
+              onClick={createGame}
+              disabled={loading}
+              className="w-full py-3 px-4 bg-gradient-to-r from-[#E37DF7] to-[#9B6AF6] rounded-xl font-bold font-['Outfit'] hover:opacity-90 transition-opacity disabled:opacity-50 mb-4"
+            >
+              {loading ? "Creating..." : "🎮 Create New Game"}
+            </button>
 
             <p className="text-xs text-gray-400 text-center mb-6 font-['Switzer']">
-              Play solo against AI Degen, or challenge a friend!
+              Create a game and share the ID with a friend to join!
             </p>
 
             <div className="relative my-6">
@@ -256,7 +252,7 @@ export default function RugOrMoon() {
                 <div className="w-full border-t border-white/20" />
               </div>
               <div className="relative flex justify-center text-sm">
-                <span className="px-4 bg-[#05050f] text-gray-400 font-['Switzer']">OR</span>
+                <span className="px-4 bg-[#05050f] text-gray-400 font-['Switzer']">OR JOIN</span>
               </div>
             </div>
 
@@ -289,9 +285,7 @@ export default function RugOrMoon() {
           <div className="max-w-2xl mx-auto text-center">
             <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-12 shadow-2xl">
               <div className="mb-8">
-                <div className="inline-block animate-bounce">
-                  <div className="w-16 h-16 border-4 border-[#9B6AF6] border-t-transparent rounded-full animate-spin" />
-                </div>
+                <div className="inline-block w-16 h-16 border-4 border-[#9B6AF6] border-t-transparent rounded-full animate-spin" />
               </div>
               <h2 className="text-3xl font-bold mb-4 font-['Outfit']">Waiting for Opponent...</h2>
               <p className="text-gray-400 mb-8 font-['Switzer']">
@@ -325,7 +319,7 @@ export default function RugOrMoon() {
               </div>
             </div>
 
-            {/* Current project */}
+            {/* Current project card */}
             <div className="bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-sm border border-white/20 rounded-2xl p-8 mb-8 shadow-2xl">
               <div className="flex items-start justify-between mb-6">
                 <div>
@@ -341,7 +335,7 @@ export default function RugOrMoon() {
                 <div className="text-right">
                   <div className="text-sm text-gray-400 font-['Switzer']">Round</div>
                   <div className="text-3xl font-bold font-['DM_Mono']">
-                    {gameState.current_round}/5
+                    {gameState.current_round}
                   </div>
                 </div>
               </div>
@@ -427,7 +421,7 @@ export default function RugOrMoon() {
                   disabled={!pick || !argument.trim() || loading}
                   className="w-full py-4 px-6 bg-gradient-to-r from-[#E37DF7] to-[#9B6AF6] rounded-xl font-bold text-xl font-['Outfit'] hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {loading ? "Submitting..." : "Lock It In"}
+                  {loading ? "Submitting..." : "Lock It In 🔒"}
                 </button>
 
                 {error && (
@@ -438,7 +432,7 @@ export default function RugOrMoon() {
               </div>
             ) : (
               <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-12 text-center shadow-2xl">
-                <div className="mb-6 animate-pulse">
+                <div className="mb-6">
                   <div className="inline-block w-16 h-16 border-4 border-[#9B6AF6] border-t-transparent rounded-full animate-spin" />
                 </div>
                 <h3 className="text-2xl font-bold mb-2 font-['Outfit']">
@@ -462,20 +456,16 @@ export default function RugOrMoon() {
                 🎉 GAME OVER 🎉
               </h2>
               <p className="text-3xl font-bold mb-8 font-['Outfit']">
-                {gameState.winner} Wins!
+                {gameState.game_winner} Wins!
               </p>
               <div className="grid grid-cols-2 gap-6 mb-8">
                 <div>
                   <div className="text-gray-400 mb-2 font-['Switzer']">{gameState.player1_name}</div>
-                  <div className="text-5xl font-bold font-['DM_Mono']">
-                    {gameState.player1_score}
-                  </div>
+                  <div className="text-5xl font-bold font-['DM_Mono']">{gameState.player1_score}</div>
                 </div>
                 <div>
                   <div className="text-gray-400 mb-2 font-['Switzer']">{gameState.player2_name}</div>
-                  <div className="text-5xl font-bold font-['DM_Mono']">
-                    {gameState.player2_score}
-                  </div>
+                  <div className="text-5xl font-bold font-['DM_Mono']">{gameState.player2_score}</div>
                 </div>
               </div>
               <button
@@ -483,6 +473,7 @@ export default function RugOrMoon() {
                   setGameState(null);
                   setGameId("");
                   setPlayerName("");
+                  setLastSeenResult(null);
                 }}
                 className="px-8 py-4 bg-gradient-to-r from-[#E37DF7] to-[#9B6AF6] rounded-xl font-bold text-xl font-['Outfit'] hover:opacity-90 transition-opacity"
               >
@@ -493,27 +484,15 @@ export default function RugOrMoon() {
         )}
       </div>
 
-      {/* Round result overlay with Mochi */}
+      {/* Round result overlay */}
       {showResult && gameState?.last_round_result && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-6">
-          <div className="bg-gradient-to-br from-white/10 to-white/5 border-2 border-white/20 rounded-2xl p-8 max-w-2xl w-full shadow-2xl animate-scale-in relative overflow-hidden">
-            {/* Mochi reaction based on outcome */}
-            <div className="absolute top-4 right-4 animate-float">
-              <img 
-                src={gameState.last_round_result.outcome === "MOON" 
-                  ? "/images/mochi-stonks-up.png" 
-                  : "/images/mochi-stonks-down.png"
-                }
-                alt="Mochi reaction"
-                className="w-24 h-24 drop-shadow-2xl"
-              />
-            </div>
-
+          <div className="bg-gradient-to-br from-white/10 to-white/5 border-2 border-white/20 rounded-2xl p-8 max-w-2xl w-full shadow-2xl animate-scale-in">
             <h2 className="text-4xl font-bold mb-4 font-['Outfit']">Round Result</h2>
-            
-            <div className={`text-6xl font-bold mb-6 font-['Outfit'] ${
-              gameState.last_round_result.outcome === "MOON" 
-                ? "text-yellow-400" 
+
+            <div className={`text-5xl font-bold mb-6 font-['Outfit'] ${
+              gameState.last_round_result.outcome === "MOON"
+                ? "text-yellow-400"
                 : "text-red-400"
             }`}>
               {gameState.last_round_result.outcome === "MOON" ? "🚀 TO THE MOON!" : "🪤 IT'S A RUG!"}
@@ -527,25 +506,17 @@ export default function RugOrMoon() {
 
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div className="bg-white/5 rounded-lg p-4">
-                <div className="text-sm text-gray-400 mb-1 font-['Switzer']">
-                  {gameState.player1_name}
-                </div>
+                <div className="text-sm text-gray-400 mb-1 font-['Switzer']">{gameState.player1_name}</div>
                 <div className={`text-2xl font-bold font-['Outfit'] ${
-                  gameState.last_round_result.player1_pick === "MOON" 
-                    ? "text-yellow-400" 
-                    : "text-red-400"
+                  gameState.last_round_result.player1_pick === "MOON" ? "text-yellow-400" : "text-red-400"
                 }`}>
                   {gameState.last_round_result.player1_pick === "MOON" ? "🚀 MOON" : "🪤 RUG"}
                 </div>
               </div>
               <div className="bg-white/5 rounded-lg p-4">
-                <div className="text-sm text-gray-400 mb-1 font-['Switzer']">
-                  {gameState.player2_name}
-                </div>
+                <div className="text-sm text-gray-400 mb-1 font-['Switzer']">{gameState.player2_name}</div>
                 <div className={`text-2xl font-bold font-['Outfit'] ${
-                  gameState.last_round_result.player2_pick === "MOON" 
-                    ? "text-yellow-400" 
-                    : "text-red-400"
+                  gameState.last_round_result.player2_pick === "MOON" ? "text-yellow-400" : "text-red-400"
                 }`}>
                   {gameState.last_round_result.player2_pick === "MOON" ? "🚀 MOON" : "🪤 RUG"}
                 </div>
@@ -566,16 +537,14 @@ export default function RugOrMoon() {
         </div>
       )}
 
-      {/* Footer with Mochi credit */}
+      {/* Footer */}
       <footer className="relative z-10 mt-20 pb-8 text-center">
         <div className="max-w-4xl mx-auto px-6">
           <div className="flex items-center justify-center gap-2 mb-4">
-            <span className="text-gray-400 text-sm font-['Switzer']">
-              Mascot by kellyboom888 •
-            </span>
-            <a 
-              href="https://genlayer.com" 
-              target="_blank" 
+            <span className="text-gray-400 text-sm font-['Switzer']">Mascot by kellyboom888 •</span>
+            <a
+              href="https://genlayer.com"
+              target="_blank"
               rel="noopener noreferrer"
               className="text-[#9B6AF6] hover:text-[#E37DF7] transition-colors text-sm font-['Switzer']"
             >
@@ -598,47 +567,25 @@ export default function RugOrMoon() {
           33% { transform: translate(30px, -50px) scale(1.1); }
           66% { transform: translate(-20px, 20px) scale(0.9); }
         }
-
         @keyframes float {
           0%, 100% { transform: translateY(0px); }
           50% { transform: translateY(-20px); }
         }
-
         @keyframes shimmer {
           0% { background-position: 0% 50%; }
           50% { background-position: 100% 50%; }
           100% { background-position: 0% 50%; }
         }
-
         @keyframes scale-in {
           0% { transform: scale(0.9); opacity: 0; }
           100% { transform: scale(1); opacity: 1; }
         }
-
-        .animate-blob {
-          animation: blob 7s infinite;
-        }
-
-        .animate-float {
-          animation: float 3s ease-in-out infinite;
-        }
-
-        .animate-shimmer {
-          background-size: 200% 200%;
-          animation: shimmer 3s linear infinite;
-        }
-
-        .animate-scale-in {
-          animation: scale-in 0.3s ease-out;
-        }
-
-        .animation-delay-2000 {
-          animation-delay: 2s;
-        }
-
-        .animation-delay-4000 {
-          animation-delay: 4s;
-        }
+        .animate-blob { animation: blob 7s infinite; }
+        .animate-float { animation: float 3s ease-in-out infinite; }
+        .animate-shimmer { background-size: 200% 200%; animation: shimmer 3s linear infinite; }
+        .animate-scale-in { animation: scale-in 0.3s ease-out; }
+        .animation-delay-2000 { animation-delay: 2s; }
+        .animation-delay-4000 { animation-delay: 4s; }
       `}</style>
     </div>
   );

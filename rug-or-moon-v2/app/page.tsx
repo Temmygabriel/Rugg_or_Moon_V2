@@ -1,642 +1,302 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { createClient, createAccount } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
+import { TransactionStatus } from "genlayer-js/types";
 
-// ⚡ PASTE YOUR CONTRACT ADDRESS HERE ⚡
-const CONTRACT_ADDRESS = "0xbcB9564dA238D9098891102bA6540E274aDFC793";
+// ─────────────────────────────────────────────────────────────────────────────
+//  🔧 PASTE YOUR CONTRACT ADDRESS HERE
+// ─────────────────────────────────────────────────────────────────────────────
+const CONTRACT_ADDRESS = "0xE9C5691AA890aB01f47a85Cc47BfE45763bB8d55";
+// ─────────────────────────────────────────────────────────────────────────────
 
-const client = createClient({
-  chain: studionet,
-  endpoint: "https://studio.genlayer.com/api",
-});
+const POLL_INTERVAL = 4000;
 
-const account = createAccount();
-
-interface GameState {
-  game_id?: number;
-  mode?: string;
-  status: string;
-  player1_name?: string;
-  player2_name?: string;
-  player1_score?: number;
-  player2_score?: number;
-  player1_submitted?: boolean;
-  player2_submitted?: boolean;
-  current_round?: number;
-  current_project?: {
-    name: string;
-    ticker: string;
-    tagline: string;
-    flags: string[];
-    whitepaper_quote: string;
-  };
-  last_round_result?: {
-    outcome: string;
-    explanation: string;
-    winner: string;
-    reasoning: string;
-    player1_pick: string;
-    player2_pick: string;
-    player1_arg: string;
-    player2_arg: string;
-  };
-  game_winner?: string;
+// ─── TYPES ───────────────────────────────────────────────────────────────────
+interface Project {
+  name: string;
+  ticker: string;
+  tagline: string;
+  flags: string[];
+  whitepaper_quote: string;
 }
 
+interface RoundResult {
+  outcome: string;
+  explanation: string;
+  winner: string;
+  reasoning: string;
+  player1_pick: string;
+  player2_pick: string;
+  player1_arg: string;
+  player2_arg: string;
+}
+
+interface GameState {
+  game_id: number;
+  mode: string;
+  status: string;
+  player1_name: string;
+  player2_name: string | null;
+  player1_score: number;
+  player2_score: number;
+  player1_submitted: boolean;
+  player2_submitted: boolean;
+  current_round: number;
+  current_project: Project | null;
+  last_round_result: RoundResult | null;
+  game_winner: string | null;
+  history: RoundResult[];
+}
+
+// ─── GENLAYER HELPERS (same pattern as The Verdict) ──────────────────────────
+function makeClient() {
+  const account = createAccount();
+  return { client: createClient({ chain: studionet, account }), account };
+}
+
+async function readContract(gameId: number): Promise<GameState | null> {
+  try {
+    const { client } = makeClient();
+    const result = await client.readContract({
+      address: CONTRACT_ADDRESS as `0x${string}`,
+      functionName: "get_game",
+      args: [gameId],
+    });
+    const raw = result as string;
+    if (!raw) return null;
+    return JSON.parse(raw) as GameState;
+  } catch {
+    return null;
+  }
+}
+
+async function readGameCount(): Promise<number> {
+  try {
+    const { client } = makeClient();
+    const result = await client.readContract({
+      address: CONTRACT_ADDRESS as `0x${string}`,
+      functionName: "get_game_count",
+      args: [],
+    });
+    return Number(result);
+  } catch {
+    return 0;
+  }
+}
+
+async function writeContract(fn: string, args: (string | number | boolean | bigint)[]): Promise<boolean> {
+  try {
+    const { client } = makeClient();
+    const hash = await client.writeContract({
+      address: CONTRACT_ADDRESS as `0x${string}`,
+      functionName: fn,
+      args,
+      value: BigInt(0),
+      leaderOnly: true,
+    });
+    await client.waitForTransactionReceipt({
+      hash,
+      status: TransactionStatus.ACCEPTED,
+      retries: 60,
+      interval: 3000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function RugOrMoon() {
-  const [gameId, setGameId] = useState("");
+  const [screen, setScreen] = useState<"home" | "lobby" | "game" | "gameOver">("home");
   const [playerName, setPlayerName] = useState("");
+  const [joinId, setJoinId] = useState("");
+  const [gameId, setGameId] = useState<number | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [pick, setPick] = useState<"RUG" | "MOON" | null>(null);
   const [argument, setArgument] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [loadingMsg, setLoadingMsg] = useState("");
+  const [submitted, setSubmitted] = useState(false);
   const [showResult, setShowResult] = useState(false);
-  const [lastSeenRound, setLastSeenRound] = useState(0);
+  const [lastResult, setLastResult] = useState<RoundResult | null>(null);
+  const [error, setError] = useState("");
 
-  const fetchGame = async (id: string) => {
-    try {
-      const result = await client.readContract({
-        address: CONTRACT_ADDRESS as `0x${string}`,
-        functionName: "get_game",
-        args: [parseInt(id)],
-        account,
-      });
-      const parsed = JSON.parse(result as string);
-      setGameState(parsed);
-      if (
-        parsed.last_round_result &&
-        parsed.current_round > lastSeenRound
-      ) {
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const prevHistoryLen = useRef<number>(0);
+
+  // ─── POLLING ─────────────────────────────────────────────────────────────
+  const poll = useCallback(async () => {
+    if (!gameId) return;
+    const state = await readContract(gameId);
+    if (!state) return;
+
+    if (state.history.length > prevHistoryLen.current) {
+      const latest = state.last_round_result;
+      if (latest) {
+        prevHistoryLen.current = state.history.length;
+        setLastResult(latest);
         setShowResult(true);
-        setLastSeenRound(parsed.current_round);
+        setSubmitted(false);
+        setPick(null);
+        setArgument("");
       }
-    } catch (err) {
-      console.error(err);
     }
-  };
 
-  const getNewGameId = async (): Promise<string> => {
-    const count = await client.readContract({
-      address: CONTRACT_ADDRESS as `0x${string}`,
-      functionName: "get_game_count",
-      args: [],
-      account,
-    });
-    return (count ?? 0).toString();
-  };
+    if (state.status === "finished" && pollRef.current) {
+      clearInterval(pollRef.current);
+    }
 
-  const createGame = async () => {
-    if (!playerName.trim()) { setError("Enter your name first!"); return; }
-    setLoading(true);
-    setError("");
-    try {
-      await client.writeContract({
-        address: CONTRACT_ADDRESS as `0x${string}`,
-        functionName: "create_game",
-        args: [playerName.trim()],
-        account,
-        value: 0n,
-      });
-      const newId = await getNewGameId();
-      setGameId(newId);
-      await fetchGame(newId);
-    } catch (err: any) {
-      setError(err.message || "Failed to create game");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const createSoloGame = async () => {
-    if (!playerName.trim()) { setError("Enter your name first!"); return; }
-    setLoading(true);
-    setError("");
-    try {
-      // Step 1: create game (instant, no AI)
-      await client.writeContract({
-        address: CONTRACT_ADDRESS as `0x${string}`,
-        functionName: "create_solo_game",
-        args: [playerName.trim()],
-        account,
-        value: 0n,
-      });
-      const newId = await getNewGameId();
-      setGameId(newId);
-      // Step 2: start solo — AI generates first project (takes ~30-60s)
-      await client.writeContract({
-        address: CONTRACT_ADDRESS as `0x${string}`,
-        functionName: "start_solo",
-        args: [parseInt(newId)],
-        account,
-        value: 0n,
-      });
-      await fetchGame(newId);
-    } catch (err: any) {
-      setError(err.message || "Failed to create solo game");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const joinGame = async () => {
-    if (!playerName.trim() || !gameId.trim()) {
-      setError("Enter your name and game ID!");
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      await client.writeContract({
-        address: CONTRACT_ADDRESS as `0x${string}`,
-        functionName: "join_game",
-        args: [parseInt(gameId), playerName.trim()],
-        account,
-        value: 0n,
-      });
-      await fetchGame(gameId);
-    } catch (err: any) {
-      setError(err.message || "Failed to join game");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const submitPick = async () => {
-    if (!pick || !argument.trim()) {
-      setError("Make your pick and write your argument!");
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      await client.writeContract({
-        address: CONTRACT_ADDRESS as `0x${string}`,
-        functionName: "submit_pick",
-        args: [parseInt(gameId), playerName, pick, argument.trim()],
-        account,
-        value: 0n,
-      });
-      setPick(null);
-      setArgument("");
-      await fetchGame(gameId);
-    } catch (err: any) {
-      setError(err.message || "Failed to submit pick");
-    } finally {
-      setLoading(false);
-    }
-  };
+    setGameState(state);
+  }, [gameId]);
 
   useEffect(() => {
-    if (gameId && gameState?.status === "in_progress") {
-      const interval = setInterval(() => fetchGame(gameId), 4000);
-      return () => clearInterval(interval);
+    if (gameId && (screen === "lobby" || screen === "game")) {
+      poll();
+      pollRef.current = setInterval(poll, POLL_INTERVAL);
+      return () => { if (pollRef.current) clearInterval(pollRef.current); };
     }
-  }, [gameId, gameState?.status]);
+  }, [gameId, screen, poll]);
 
-  const mySubmitted =
-    gameState?.player1_name === playerName
-      ? gameState?.player1_submitted
-      : gameState?.player2_submitted;
+  useEffect(() => {
+    if (!gameState) return;
+    if (gameState.status === "in_progress" && screen === "lobby") setScreen("game");
+    if (gameState.status === "finished") setScreen("gameOver");
+  }, [gameState, screen]);
 
-  const opponentSubmitted =
-    gameState?.player1_name === playerName
-      ? gameState?.player2_submitted
-      : gameState?.player1_submitted;
+  // ─── ACTIONS ─────────────────────────────────────────────────────────────
+  async function handleCreate() {
+    if (!playerName.trim()) return;
+    setLoading(true);
+    setLoadingMsg("Creating game...");
+    setError("");
+    try {
+      const countBefore = await readGameCount();
+      const ok = await writeContract("create_game", [playerName.trim()]);
+      if (!ok) throw new Error("Transaction failed");
+      const newId = countBefore + 1;
+      setGameId(newId);
+      prevHistoryLen.current = 0;
+      setScreen("lobby");
+    } catch {
+      setError("Failed to create game.");
+    }
+    setLoading(false);
+  }
 
+  async function handleCreateSolo() {
+    if (!playerName.trim()) return;
+    setLoading(true);
+    setLoadingMsg("Creating solo game...");
+    setError("");
+    try {
+      const countBefore = await readGameCount();
+      const ok = await writeContract("create_solo_game", [playerName.trim()]);
+      if (!ok) throw new Error("Transaction failed");
+      const newId = countBefore + 1;
+      setGameId(newId);
+      prevHistoryLen.current = 0;
+      // Now call start_solo to generate first project
+      setLoadingMsg("AI Oracle generating your first project...");
+      const ok2 = await writeContract("start_solo", [newId]);
+      if (!ok2) throw new Error("Failed to start solo game");
+      const state = await readContract(newId);
+      if (state) setGameState(state);
+      setScreen("game");
+    } catch {
+      setError("Failed to create solo game.");
+    }
+    setLoading(false);
+  }
+
+  async function handleJoin() {
+    const id = parseInt(joinId);
+    if (!playerName.trim() || isNaN(id)) return;
+    setLoading(true);
+    setLoadingMsg("Joining game...");
+    setError("");
+    try {
+      const state = await readContract(id);
+      if (!state) throw new Error("Game not found");
+      if (state.status !== "waiting") throw new Error("Game already started");
+      const ok = await writeContract("join_game", [id, playerName.trim()]);
+      if (!ok) throw new Error("Transaction failed");
+      setGameId(id);
+      prevHistoryLen.current = 0;
+      const newState = await readContract(id);
+      if (newState) setGameState(newState);
+      setScreen("game");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to join");
+    }
+    setLoading(false);
+  }
+
+  async function handleSubmitPick() {
+    if (!pick || !argument.trim() || !gameId || !gameState) return;
+    setLoading(true);
+    setLoadingMsg("Locking in your pick...");
+    setError("");
+    try {
+      const ok = await writeContract("submit_pick", [
+        gameId,
+        playerName.trim(),
+        pick,
+        argument.trim(),
+      ]);
+      if (!ok) throw new Error("Transaction failed");
+      setSubmitted(true);
+      setLoadingMsg("Waiting for opponent & AI Oracle...");
+    } catch {
+      setError("Failed to submit. Try again.");
+    }
+    setLoading(false);
+  }
+
+  function reset() {
+    setScreen("home");
+    setPlayerName("");
+    setJoinId("");
+    setGameId(null);
+    setGameState(null);
+    setPick(null);
+    setArgument("");
+    setLoading(false);
+    setSubmitted(false);
+    setShowResult(false);
+    setLastResult(null);
+    prevHistoryLen.current = 0;
+    if (pollRef.current) clearInterval(pollRef.current);
+  }
+
+  const mySubmitted = gameState?.player1_name === playerName
+    ? gameState?.player1_submitted
+    : gameState?.player2_submitted;
+
+  const opponentSubmitted = gameState?.player1_name === playerName
+    ? gameState?.player2_submitted
+    : gameState?.player1_submitted;
+
+  // ─── RENDER ───────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-[#05050f] text-white relative overflow-hidden">
-      {/* Blobs */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-[-20%] right-[-10%] w-[600px] h-[600px] rounded-full bg-gradient-to-br from-[#E37DF7]/20 via-[#9B6AF6]/15 to-[#110FFF]/10 blur-3xl animate-blob" />
-        <div className="absolute bottom-[-20%] left-[-10%] w-[500px] h-[500px] rounded-full bg-gradient-to-tr from-[#110FFF]/20 via-[#9B6AF6]/15 to-[#E37DF7]/10 blur-3xl animate-blob animation-delay-2000" />
-        <div className="absolute top-[40%] left-[30%] w-[400px] h-[400px] rounded-full bg-gradient-to-bl from-[#9B6AF6]/10 to-[#E37DF7]/5 blur-3xl animate-blob animation-delay-4000" />
-      </div>
-
-      {/* Floating triangles */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none opacity-20">
-        <div className="absolute top-20 left-[10%] animate-float">
-          <div className="w-8 h-8 border-2 border-[#E37DF7] rotate-45" />
-        </div>
-        <div className="absolute top-[40%] right-[15%] animate-float animation-delay-2000">
-          <div className="w-12 h-12 border-2 border-[#9B6AF6] rotate-12" />
-        </div>
-        <div className="absolute bottom-32 left-[20%] animate-float animation-delay-4000">
-          <div className="w-10 h-10 border-2 border-[#110FFF] rotate-[30deg]" />
-        </div>
-      </div>
-
-      <div className="relative z-10 max-w-6xl mx-auto px-6 py-8">
-        {/* Header */}
-        <header className="flex items-center justify-between mb-12">
-          <div className="flex items-center gap-4">
-            <svg className="w-10 h-10" viewBox="0 0 100 100" fill="none">
-              <path d="M50 10 L90 90 L10 90 Z" fill="white" />
-            </svg>
-            <div>
-              <h1 className="text-2xl font-bold font-['Outfit']">GenLayer</h1>
-              <p className="text-sm text-gray-400 font-['Switzer']">Playverse Challenge</p>
-            </div>
-          </div>
-          <p className="text-sm text-gray-400 font-['Switzer']">Powered by AI Oracle</p>
-        </header>
-
-        {/* Hero */}
-        <div className="text-center mb-16 relative">
-          <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-80 animate-float hidden lg:block">
-            <img src="/images/mochi-main.png" alt="Mochi" className="w-48 h-auto drop-shadow-2xl" />
-          </div>
-          <h1 className="text-6xl md:text-8xl font-bold mb-4 font-['Outfit'] bg-gradient-to-r from-[#E37DF7] via-[#9B6AF6] to-[#110FFF] bg-clip-text text-transparent animate-shimmer">
-            RUG OR MOON
-          </h1>
-          <p className="text-xl md:text-2xl text-gray-300 mb-2 font-['Switzer']">
-            The Ultimate Web3 Degen Party Game
-          </p>
-          <p className="text-gray-400 font-['DM_Mono'] text-sm">
-            AI generates fake crypto projects. You call it. First to 3 wins. 🎯
-          </p>
-        </div>
-
-        {/* Setup screen */}
-        {!gameState && (
-          <div className="max-w-md mx-auto bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-8 shadow-2xl">
-            <h2 className="text-2xl font-bold mb-6 font-['Outfit'] text-center">Start Playing</h2>
-
-            <input
-              type="text"
-              placeholder="Your name..."
-              value={playerName}
-              onChange={(e) => setPlayerName(e.target.value)}
-              className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-xl mb-4 font-['Switzer'] focus:outline-none focus:border-[#9B6AF6] transition-colors"
-            />
-
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <button
-                onClick={createGame}
-                disabled={loading}
-                className="py-3 px-4 bg-gradient-to-r from-[#E37DF7] to-[#9B6AF6] rounded-xl font-bold font-['Outfit'] hover:opacity-90 transition-opacity disabled:opacity-50 text-sm"
-              >
-                {loading ? "⏳ Creating (2-5 min)..." : "👥 Play with Friend"}
-              </button>
-              <button
-                onClick={createSoloGame}
-                disabled={loading}
-                className="py-3 px-4 bg-gradient-to-r from-[#110FFF] to-[#9B6AF6] rounded-xl font-bold font-['Outfit'] hover:opacity-90 transition-opacity disabled:opacity-50 text-sm"
-              >
-                {loading ? "⏳ Creating (2-5 min)..." : "🤖 Play vs AI"}
-              </button>
-            </div>
-
-            <p className="text-xs text-gray-400 text-center mb-6 font-['Switzer']">
-              Challenge a friend or battle AI Degen solo!
-            </p>
-
-            <div className="relative my-6">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-white/20" />
-              </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="px-4 bg-[#05050f] text-gray-400 font-['Switzer']">OR JOIN</span>
-              </div>
-            </div>
-
-            <input
-              type="text"
-              placeholder="Game ID to join..."
-              value={gameId}
-              onChange={(e) => setGameId(e.target.value)}
-              className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-xl mb-4 font-['Switzer'] focus:outline-none focus:border-[#9B6AF6] transition-colors"
-            />
-
-            <button
-              onClick={joinGame}
-              disabled={loading}
-              className="w-full py-3 px-6 bg-white/10 border border-white/20 rounded-xl font-bold font-['Outfit'] hover:bg-white/20 transition-colors disabled:opacity-50"
-            >
-              {loading ? "Joining..." : "Join Friend's Game"}
-            </button>
-
-            {error && (
-              <div className="mt-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200 text-sm font-['Switzer']">
-                {error}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Waiting for project generation (solo) */}
-        {gameState?.status === "waiting_project" && (
-          <div className="max-w-2xl mx-auto text-center">
-            <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-12 shadow-2xl">
-              <div className="mb-8">
-                <div className="inline-block w-16 h-16 border-4 border-[#9B6AF6] border-t-transparent rounded-full animate-spin" />
-              </div>
-              <h2 className="text-3xl font-bold mb-4 font-['Outfit']">AI Oracle Cooking...</h2>
-              <p className="text-gray-400 font-['Switzer']">Generating your first crypto project on-chain. This takes 30-60 seconds.</p>
-            </div>
-          </div>
-        )}
-
-        {/* Waiting for opponent */}
-        {gameState?.status === "waiting" && (
-          <div className="max-w-2xl mx-auto text-center">
-            <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-12 shadow-2xl">
-              <div className="mb-8">
-                <div className="inline-block w-16 h-16 border-4 border-[#9B6AF6] border-t-transparent rounded-full animate-spin" />
-              </div>
-              <h2 className="text-3xl font-bold mb-4 font-['Outfit']">Waiting for Opponent...</h2>
-              <p className="text-gray-400 mb-8 font-['Switzer']">Share this Game ID with a friend:</p>
-              <div className="inline-block px-8 py-4 bg-gradient-to-r from-[#E37DF7]/20 to-[#9B6AF6]/20 border-2 border-[#9B6AF6] rounded-xl">
-                <span className="text-4xl font-bold font-['DM_Mono'] tracking-wider">{gameId}</span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Active game */}
-        {gameState?.status === "in_progress" && gameState.current_project && (
-          <div className="max-w-4xl mx-auto">
-            {/* Scores */}
-            <div className="grid grid-cols-2 gap-6 mb-8">
-              <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
-                <div className="text-sm text-gray-400 mb-1 font-['Switzer']">
-                  {gameState.mode === "solo" ? "You" : "Player 1"}
-                </div>
-                <div className="text-2xl font-bold font-['Outfit'] mb-1">{gameState.player1_name}</div>
-                <div className="text-3xl font-bold font-['DM_Mono'] bg-gradient-to-r from-[#E37DF7] to-[#9B6AF6] bg-clip-text text-transparent">
-                  {gameState.player1_score || 0}
-                </div>
-              </div>
-              <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6 relative">
-                {gameState.mode === "solo" && (
-                  <div className="absolute top-3 right-3">
-                    <img src="/images/mochi-main.png" alt="AI Degen" className="w-10 h-10 drop-shadow-lg" />
-                  </div>
-                )}
-                <div className="text-sm text-gray-400 mb-1 font-['Switzer']">
-                  {gameState.mode === "solo" ? "AI Degen 🤖" : "Player 2"}
-                </div>
-                <div className="text-2xl font-bold font-['Outfit'] mb-1">{gameState.player2_name}</div>
-                <div className="text-3xl font-bold font-['DM_Mono'] bg-gradient-to-r from-[#E37DF7] to-[#9B6AF6] bg-clip-text text-transparent">
-                  {gameState.player2_score || 0}
-                </div>
-              </div>
-            </div>
-
-            {/* Project card */}
-            <div className="bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-sm border border-white/20 rounded-2xl p-8 mb-8 shadow-2xl">
-              <div className="flex items-start justify-between mb-6">
-                <div>
-                  <h2 className="text-4xl font-bold mb-2 font-['Outfit']">
-                    {gameState.current_project.name}
-                  </h2>
-                  <div className="inline-block px-4 py-1 bg-[#9B6AF6]/20 border border-[#9B6AF6] rounded-full">
-                    <span className="text-[#9B6AF6] font-bold font-['DM_Mono']">
-                      ${gameState.current_project.ticker}
-                    </span>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-sm text-gray-400 font-['Switzer']">Round</div>
-                  <div className="text-3xl font-bold font-['DM_Mono']">{gameState.current_round}</div>
-                </div>
-              </div>
-
-              <p className="text-xl text-gray-300 mb-6 font-['Switzer'] italic">
-                "{gameState.current_project.tagline}"
-              </p>
-
-              <div className="mb-6">
-                <h3 className="text-sm font-bold text-gray-400 mb-3 font-['Outfit'] uppercase tracking-wider">
-                  Intelligence Brief
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {gameState.current_project.flags.map((flag, idx) => (
-                    <div
-                      key={idx}
-                      className={`px-4 py-3 rounded-lg border ${
-                        flag.startsWith("✅")
-                          ? "bg-green-500/10 border-green-500/30"
-                          : "bg-red-500/10 border-red-500/30"
-                      }`}
-                    >
-                      <span className="text-sm font-['Switzer']">{flag}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-black/20 rounded-xl p-4 border border-white/10">
-                <div className="text-xs text-gray-500 mb-2 font-['DM_Mono'] uppercase">From the Whitepaper</div>
-                <p className="text-gray-300 font-['Switzer'] italic">
-                  "{gameState.current_project.whitepaper_quote}"
-                </p>
-              </div>
-            </div>
-
-            {/* Pick action */}
-            {!mySubmitted ? (
-              <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-8 shadow-2xl">
-                <h3 className="text-2xl font-bold mb-6 font-['Outfit'] text-center">Make Your Call</h3>
-
-                <div className="grid grid-cols-2 gap-4 mb-6">
-                  <button
-                    onClick={() => setPick("RUG")}
-                    className={`py-6 rounded-xl font-bold text-2xl font-['Outfit'] transition-all ${
-                      pick === "RUG"
-                        ? "bg-red-500 border-2 border-red-300 shadow-lg shadow-red-500/50"
-                        : "bg-red-500/20 border-2 border-red-500/50 hover:bg-red-500/30"
-                    }`}
-                  >
-                    🪤 RUG
-                  </button>
-                  <button
-                    onClick={() => setPick("MOON")}
-                    className={`py-6 rounded-xl font-bold text-2xl font-['Outfit'] transition-all ${
-                      pick === "MOON"
-                        ? "bg-yellow-500 border-2 border-yellow-300 shadow-lg shadow-yellow-500/50"
-                        : "bg-yellow-500/20 border-2 border-yellow-500/50 hover:bg-yellow-500/30"
-                    }`}
-                  >
-                    🚀 MOON
-                  </button>
-                </div>
-
-                <textarea
-                  placeholder="Why? (1-2 sentences)"
-                  value={argument}
-                  onChange={(e) => setArgument(e.target.value)}
-                  className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-xl mb-4 font-['Switzer'] resize-none focus:outline-none focus:border-[#9B6AF6] transition-colors"
-                  rows={3}
-                  maxLength={200}
-                />
-
-                <button
-                  onClick={submitPick}
-                  disabled={!pick || !argument.trim() || loading}
-                  className="w-full py-4 px-6 bg-gradient-to-r from-[#E37DF7] to-[#9B6AF6] rounded-xl font-bold text-xl font-['Outfit'] hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {loading ? "Submitting..." : "Lock It In 🔒"}
-                </button>
-
-                {error && (
-                  <div className="mt-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200 text-sm font-['Switzer']">
-                    {error}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-12 text-center shadow-2xl">
-                <div className="mb-6">
-                  <div className="inline-block w-16 h-16 border-4 border-[#9B6AF6] border-t-transparent rounded-full animate-spin" />
-                </div>
-                <h3 className="text-2xl font-bold mb-2 font-['Outfit']">
-                  {opponentSubmitted ? "AI Oracle Judging..." : "Waiting for opponent..."}
-                </h3>
-                <p className="text-gray-400 font-['Switzer']">
-                  {opponentSubmitted
-                    ? "The verdict is being prepared on-chain..."
-                    : "Your pick is locked. Waiting for the other player."}
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Game over */}
-        {gameState?.status === "finished" && (
-          <div className="max-w-2xl mx-auto text-center">
-            <div className="bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-sm border-2 border-white/20 rounded-2xl p-12 shadow-2xl">
-              <h2 className="text-5xl font-bold mb-4 font-['Outfit'] bg-gradient-to-r from-[#E37DF7] via-[#9B6AF6] to-[#110FFF] bg-clip-text text-transparent">
-                🎉 GAME OVER 🎉
-              </h2>
-              <p className="text-3xl font-bold mb-8 font-['Outfit']">{gameState.game_winner} Wins!</p>
-              <div className="grid grid-cols-2 gap-6 mb-8">
-                <div>
-                  <div className="text-gray-400 mb-2 font-['Switzer']">{gameState.player1_name}</div>
-                  <div className="text-5xl font-bold font-['DM_Mono']">{gameState.player1_score}</div>
-                </div>
-                <div>
-                  <div className="text-gray-400 mb-2 font-['Switzer']">{gameState.player2_name}</div>
-                  <div className="text-5xl font-bold font-['DM_Mono']">{gameState.player2_score}</div>
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  setGameState(null);
-                  setGameId("");
-                  setPlayerName("");
-                  setLastSeenRound(0);
-                }}
-                className="px-8 py-4 bg-gradient-to-r from-[#E37DF7] to-[#9B6AF6] rounded-xl font-bold text-xl font-['Outfit'] hover:opacity-90 transition-opacity"
-              >
-                Play Again
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Round result overlay */}
-      {showResult && gameState?.last_round_result && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-6">
-          <div className="bg-gradient-to-br from-white/10 to-white/5 border-2 border-white/20 rounded-2xl p-8 max-w-2xl w-full shadow-2xl animate-scale-in relative overflow-hidden">
-            <div className="absolute top-4 right-4 animate-float">
-              <img
-                src={gameState.last_round_result.outcome === "MOON"
-                  ? "/images/mochi-stonks-up.png"
-                  : "/images/mochi-stonks-down.png"}
-                alt="Mochi reaction"
-                className="w-20 h-20 drop-shadow-2xl"
-              />
-            </div>
-
-            <h2 className="text-4xl font-bold mb-4 font-['Outfit']">Round Result</h2>
-
-            <div className={`text-5xl font-bold mb-4 font-['Outfit'] ${
-              gameState.last_round_result.outcome === "MOON" ? "text-yellow-400" : "text-red-400"
-            }`}>
-              {gameState.last_round_result.outcome === "MOON" ? "🚀 TO THE MOON!" : "🪤 IT'S A RUG!"}
-            </div>
-
-            <div className="bg-black/40 rounded-xl p-4 mb-4">
-              <p className="text-gray-300 font-['Switzer'] leading-relaxed text-sm">
-                {gameState.last_round_result.explanation}
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div className="bg-white/5 rounded-lg p-4">
-                <div className="text-xs text-gray-400 mb-1 font-['Switzer']">{gameState.player1_name}</div>
-                <div className={`text-xl font-bold font-['Outfit'] mb-1 ${
-                  gameState.last_round_result.player1_pick === "MOON" ? "text-yellow-400" : "text-red-400"
-                }`}>
-                  {gameState.last_round_result.player1_pick === "MOON" ? "🚀 MOON" : "🪤 RUG"}
-                </div>
-                <div className="text-xs text-gray-400 font-['Switzer'] italic">
-                  "{gameState.last_round_result.player1_arg}"
-                </div>
-              </div>
-              <div className="bg-white/5 rounded-lg p-4">
-                <div className="text-xs text-gray-400 mb-1 font-['Switzer']">{gameState.player2_name}</div>
-                <div className={`text-xl font-bold font-['Outfit'] mb-1 ${
-                  gameState.last_round_result.player2_pick === "MOON" ? "text-yellow-400" : "text-red-400"
-                }`}>
-                  {gameState.last_round_result.player2_pick === "MOON" ? "🚀 MOON" : "🪤 RUG"}
-                </div>
-                <div className="text-xs text-gray-400 font-['Switzer'] italic">
-                  "{gameState.last_round_result.player2_arg}"
-                </div>
-              </div>
-            </div>
-
-            <div className="text-lg font-bold mb-2 font-['Outfit']">
-              Round Winner: <span className="text-[#9B6AF6]">{gameState.last_round_result.winner}</span>
-            </div>
-            <div className="text-sm text-gray-400 font-['Switzer'] mb-6 italic">
-              {gameState.last_round_result.reasoning}
-            </div>
-
-            <button
-              onClick={() => setShowResult(false)}
-              className="w-full py-4 px-6 bg-gradient-to-r from-[#E37DF7] to-[#9B6AF6] rounded-xl font-bold text-xl font-['Outfit'] hover:opacity-90 transition-opacity"
-            >
-              Next Round →
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Footer */}
-      <footer className="relative z-10 mt-20 pb-8 text-center">
-        <div className="max-w-4xl mx-auto px-6">
-          <div className="flex items-center justify-center gap-2 mb-4">
-            <span className="text-gray-400 text-sm font-['Switzer']">Mascot by kellyboom888 •</span>
-            <a href="https://genlayer.com" target="_blank" rel="noopener noreferrer"
-              className="text-[#9B6AF6] hover:text-[#E37DF7] transition-colors text-sm font-['Switzer']">
-              GenLayer Playverse Challenge
-            </a>
-          </div>
-          <p className="text-gray-500 text-xs font-['DM_Mono']">
-            Built with AI Consensus • Trust Infrastructure for The AI Age
-          </p>
-        </div>
-      </footer>
-
-      <style jsx>{`
+    <>
+      <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;900&display=swap');
         @import url('https://api.fontshare.com/v2/css?f[]=switzer@400,500,600,700&display=swap');
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap');
 
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; background: #05050f; color: white; }
+
         @keyframes blob {
-          0%, 100% { transform: translate(0, 0) scale(1); }
-          33% { transform: translate(30px, -50px) scale(1.1); }
-          66% { transform: translate(-20px, 20px) scale(0.9); }
+          0%,100% { transform: translate(0,0) scale(1); }
+          33% { transform: translate(30px,-50px) scale(1.1); }
+          66% { transform: translate(-20px,20px) scale(0.9); }
         }
         @keyframes float {
-          0%, 100% { transform: translateY(0px); }
+          0%,100% { transform: translateY(0px); }
           50% { transform: translateY(-20px); }
         }
         @keyframes shimmer {
@@ -644,17 +304,321 @@ export default function RugOrMoon() {
           50% { background-position: 100% 50%; }
           100% { background-position: 0% 50%; }
         }
-        @keyframes scale-in {
-          0% { transform: scale(0.9); opacity: 0; }
-          100% { transform: scale(1); opacity: 1; }
-        }
-        .animate-blob { animation: blob 7s infinite; }
-        .animate-float { animation: float 3s ease-in-out infinite; }
-        .animate-shimmer { background-size: 200% 200%; animation: shimmer 3s linear infinite; }
-        .animate-scale-in { animation: scale-in 0.3s ease-out; }
-        .animation-delay-2000 { animation-delay: 2s; }
-        .animation-delay-4000 { animation-delay: 4s; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes fadeUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes scaleIn { from{opacity:0;transform:scale(0.9)} to{opacity:1;transform:scale(1)} }
+
+        .screen { animation: fadeUp 0.4s ease both; }
+        .blob { animation: blob 7s infinite; }
+        .float { animation: float 3s ease-in-out infinite; }
+        .delay-2 { animation-delay: 2s; }
+        .delay-4 { animation-delay: 4s; }
+        .spin { animation: spin 0.8s linear infinite; }
+        .shimmer { background-size: 200% 200%; animation: shimmer 3s linear infinite; }
+        .scale-in { animation: scaleIn 0.3s ease both; }
+
+        .loader { display:inline-block; width:20px; height:20px; border:3px solid rgba(227,125,247,0.2); border-top-color:#E37DF7; border-radius:50%; animation:spin 0.8s linear infinite; }
       `}</style>
-    </div>
+
+      <div style={{ minHeight: "100vh", background: "#05050f", color: "white", position: "relative", overflow: "hidden", fontFamily: "Switzer, sans-serif" }}>
+
+        {/* Background blobs */}
+        <div style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}>
+          <div className="blob" style={{ position:"absolute", top:"-20%", right:"-10%", width:600, height:600, borderRadius:"50%", background:"radial-gradient(circle, rgba(227,125,247,0.2), rgba(155,106,246,0.15), rgba(17,15,255,0.1))", filter:"blur(80px)" }} />
+          <div className="blob delay-2" style={{ position:"absolute", bottom:"-20%", left:"-10%", width:500, height:500, borderRadius:"50%", background:"radial-gradient(circle, rgba(17,15,255,0.2), rgba(155,106,246,0.15), rgba(227,125,247,0.1))", filter:"blur(80px)" }} />
+        </div>
+
+        {/* Floating triangles */}
+        <div style={{ position:"absolute", inset:0, overflow:"hidden", pointerEvents:"none", opacity:0.15 }}>
+          <div className="float" style={{ position:"absolute", top:80, left:"10%", width:32, height:32, border:"2px solid #E37DF7", transform:"rotate(45deg)" }} />
+          <div className="float delay-2" style={{ position:"absolute", top:"40%", right:"15%", width:48, height:48, border:"2px solid #9B6AF6", transform:"rotate(12deg)" }} />
+          <div className="float delay-4" style={{ position:"absolute", bottom:128, left:"20%", width:40, height:40, border:"2px solid #110FFF", transform:"rotate(30deg)" }} />
+        </div>
+
+        <div style={{ position:"relative", zIndex:1, maxWidth:960, margin:"0 auto", padding:"2rem 1.5rem" }}>
+
+          {/* Header */}
+          <header style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"3rem" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:16 }}>
+              <svg width="40" height="40" viewBox="0 0 100 100" fill="none"><path d="M50 10 L90 90 L10 90 Z" fill="white" /></svg>
+              <div>
+                <div style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"1.25rem" }}>GenLayer</div>
+                <div style={{ fontSize:"0.75rem", color:"#9ca3af" }}>Playverse Challenge</div>
+              </div>
+            </div>
+            <div style={{ fontSize:"0.75rem", color:"#9ca3af" }}>Powered by AI Oracle</div>
+          </header>
+
+          {/* ── HOME ──────────────────────────────────────── */}
+          {screen === "home" && (
+            <div className="screen" style={{ textAlign:"center" }}>
+              <div style={{ marginBottom:"4rem" }}>
+                <h1 className="shimmer" style={{ fontFamily:"Outfit", fontWeight:900, fontSize:"clamp(4rem,12vw,8rem)", background:"linear-gradient(to right, #E37DF7, #9B6AF6, #110FFF)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", marginBottom:"1rem" }}>
+                  RUG OR MOON
+                </h1>
+                <p style={{ fontSize:"1.25rem", color:"#d1d5db", marginBottom:"0.5rem" }}>The Ultimate Web3 Degen Party Game</p>
+                <p style={{ fontSize:"0.875rem", color:"#6b7280", fontFamily:"DM Mono" }}>AI generates fake crypto projects. You call it. First to 3 wins. 🎯</p>
+              </div>
+
+              <div style={{ maxWidth:440, margin:"0 auto", background:"rgba(255,255,255,0.05)", backdropFilter:"blur(12px)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:24, padding:"2rem" }}>
+                <h2 style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"1.5rem", marginBottom:"1.5rem" }}>Start Playing</h2>
+
+                <input
+                  placeholder="Your name..."
+                  value={playerName}
+                  onChange={e => setPlayerName(e.target.value)}
+                  style={{ width:"100%", padding:"0.85rem 1rem", background:"rgba(255,255,255,0.05)", border:"1.5px solid rgba(255,255,255,0.15)", borderRadius:12, color:"white", fontSize:"1rem", fontFamily:"Switzer", outline:"none", marginBottom:"1rem" }}
+                />
+
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:"1rem" }}>
+                  <button
+                    onClick={handleCreate}
+                    disabled={loading || !playerName.trim()}
+                    style={{ padding:"0.85rem", background:"linear-gradient(to right, #E37DF7, #9B6AF6)", border:"none", borderRadius:12, color:"white", fontFamily:"Outfit", fontWeight:700, fontSize:"0.9rem", cursor:"pointer", opacity: loading || !playerName.trim() ? 0.5 : 1 }}
+                  >
+                    {loading && loadingMsg.includes("Creating game") ? <><span className="loader" /> Creating...</> : "👥 Play with Friend"}
+                  </button>
+                  <button
+                    onClick={handleCreateSolo}
+                    disabled={loading || !playerName.trim()}
+                    style={{ padding:"0.85rem", background:"linear-gradient(to right, #110FFF, #9B6AF6)", border:"none", borderRadius:12, color:"white", fontFamily:"Outfit", fontWeight:700, fontSize:"0.9rem", cursor:"pointer", opacity: loading || !playerName.trim() ? 0.5 : 1 }}
+                  >
+                    {loading && loadingMsg.includes("solo") ? <><span className="loader" /> Creating...</> : "🤖 Play vs AI"}
+                  </button>
+                </div>
+
+                <p style={{ fontSize:"0.75rem", color:"#6b7280", marginBottom:"1.5rem" }}>Challenge a friend or battle AI Degen!</p>
+
+                <div style={{ borderTop:"1px solid rgba(255,255,255,0.1)", margin:"1rem 0" }} />
+                <p style={{ fontSize:"0.75rem", color:"#6b7280", marginBottom:"0.75rem" }}>OR JOIN A FRIEND'S GAME</p>
+
+                <input
+                  placeholder="Game ID to join..."
+                  value={joinId}
+                  onChange={e => setJoinId(e.target.value)}
+                  style={{ width:"100%", padding:"0.85rem 1rem", background:"rgba(255,255,255,0.05)", border:"1.5px solid rgba(255,255,255,0.15)", borderRadius:12, color:"white", fontSize:"1rem", fontFamily:"Switzer", outline:"none", marginBottom:"0.75rem" }}
+                />
+                <button
+                  onClick={handleJoin}
+                  disabled={loading || !playerName.trim() || !joinId.trim()}
+                  style={{ width:"100%", padding:"0.85rem", background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:12, color:"white", fontFamily:"Outfit", fontWeight:700, cursor:"pointer", opacity: loading || !playerName.trim() || !joinId.trim() ? 0.5 : 1 }}
+                >
+                  {loading && loadingMsg.includes("Joining") ? <><span className="loader" /> Joining...</> : "Join Friend's Game"}
+                </button>
+
+                {error && <div style={{ marginTop:"1rem", padding:"0.75rem", background:"rgba(239,68,68,0.15)", border:"1px solid rgba(239,68,68,0.4)", borderRadius:10, color:"#fca5a5", fontSize:"0.875rem" }}>{error}</div>}
+              </div>
+            </div>
+          )}
+
+          {/* ── LOBBY (waiting for friend) ─────────────────── */}
+          {screen === "lobby" && gameId && (
+            <div className="screen" style={{ textAlign:"center", maxWidth:560, margin:"0 auto" }}>
+              <div style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:24, padding:"3rem 2rem" }}>
+                <div className="spin" style={{ display:"inline-block", width:56, height:56, border:"4px solid rgba(155,106,246,0.3)", borderTopColor:"#9B6AF6", borderRadius:"50%", marginBottom:"2rem" }} />
+                <h2 style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"2rem", marginBottom:"0.75rem" }}>Waiting for Opponent...</h2>
+                <p style={{ color:"#9ca3af", marginBottom:"2rem" }}>Share this Game ID with your friend:</p>
+                <div style={{ display:"inline-block", padding:"1rem 2.5rem", background:"rgba(227,125,247,0.1)", border:"2px solid #9B6AF6", borderRadius:16, marginBottom:"1rem" }}>
+                  <span style={{ fontFamily:"DM Mono", fontSize:"3rem", fontWeight:700, letterSpacing:"0.1em" }}>{gameId}</span>
+                </div>
+                <p style={{ fontSize:"0.75rem", color:"#6b7280", marginTop:"1rem" }}>Checking for opponent every 4 seconds...</p>
+              </div>
+            </div>
+          )}
+
+          {/* ── GAME ──────────────────────────────────────── */}
+          {screen === "game" && gameState && gameState.current_project && (
+            <div className="screen" style={{ maxWidth:800, margin:"0 auto" }}>
+
+              {/* Scores */}
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:"2rem" }}>
+                {[
+                  { name: gameState.player1_name, score: gameState.player1_score, label: gameState.mode === "solo" ? "You" : "Player 1" },
+                  { name: gameState.player2_name || "AI Degen", score: gameState.player2_score, label: gameState.mode === "solo" ? "🤖 AI Degen" : "Player 2" },
+                ].map((p, i) => (
+                  <div key={i} style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:16, padding:"1.25rem" }}>
+                    <div style={{ fontSize:"0.75rem", color:"#9ca3af", marginBottom:"0.25rem" }}>{p.label}</div>
+                    <div style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"1.25rem", marginBottom:"0.25rem" }}>{p.name}</div>
+                    <div style={{ fontFamily:"DM Mono", fontWeight:700, fontSize:"2rem", background:"linear-gradient(to right, #E37DF7, #9B6AF6)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>{p.score || 0}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Project card */}
+              <div style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:20, padding:"2rem", marginBottom:"2rem" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"1.5rem", flexWrap:"wrap", gap:"1rem" }}>
+                  <div>
+                    <h2 style={{ fontFamily:"Outfit", fontWeight:900, fontSize:"2.5rem", marginBottom:"0.5rem" }}>{gameState.current_project.name}</h2>
+                    <div style={{ display:"inline-block", padding:"0.25rem 1rem", background:"rgba(155,106,246,0.2)", border:"1px solid #9B6AF6", borderRadius:999 }}>
+                      <span style={{ fontFamily:"DM Mono", color:"#9B6AF6", fontWeight:700 }}>${gameState.current_project.ticker}</span>
+                    </div>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontSize:"0.75rem", color:"#9ca3af" }}>Round</div>
+                    <div style={{ fontFamily:"DM Mono", fontWeight:700, fontSize:"2rem" }}>{gameState.current_round}</div>
+                  </div>
+                </div>
+
+                <p style={{ color:"#d1d5db", fontSize:"1.1rem", fontStyle:"italic", marginBottom:"1.5rem" }}>"{gameState.current_project.tagline}"</p>
+
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:"1.5rem" }}>
+                  {gameState.current_project.flags.map((flag, i) => (
+                    <div key={i} style={{ padding:"0.75rem 1rem", borderRadius:10, background: flag.startsWith("✅") ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)", border: `1px solid ${flag.startsWith("✅") ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`, fontSize:"0.875rem" }}>
+                      {flag}
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:12, padding:"1rem", border:"1px solid rgba(255,255,255,0.08)" }}>
+                  <div style={{ fontSize:"0.7rem", color:"#6b7280", fontFamily:"DM Mono", textTransform:"uppercase", marginBottom:"0.5rem" }}>From the Whitepaper</div>
+                  <p style={{ color:"#d1d5db", fontStyle:"italic" }}>"{gameState.current_project.whitepaper_quote}"</p>
+                </div>
+              </div>
+
+              {/* Pick / waiting */}
+              {!mySubmitted ? (
+                <div style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:20, padding:"2rem" }}>
+                  <h3 style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"1.5rem", textAlign:"center", marginBottom:"1.5rem" }}>Make Your Call</h3>
+
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:"1.5rem" }}>
+                    {(["RUG", "MOON"] as const).map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => setPick(p)}
+                        style={{
+                          padding:"1.5rem", borderRadius:12, fontFamily:"Outfit", fontWeight:700, fontSize:"1.5rem", cursor:"pointer", transition:"all 0.2s",
+                          background: pick === p ? (p === "RUG" ? "#ef4444" : "#eab308") : (p === "RUG" ? "rgba(239,68,68,0.15)" : "rgba(234,179,8,0.15)"),
+                          border: pick === p ? `2px solid ${p === "RUG" ? "#fca5a5" : "#fde047"}` : `2px solid ${p === "RUG" ? "rgba(239,68,68,0.4)" : "rgba(234,179,8,0.4)"}`,
+                          color: "white",
+                          boxShadow: pick === p ? `0 0 20px ${p === "RUG" ? "rgba(239,68,68,0.4)" : "rgba(234,179,8,0.4)"}` : "none",
+                        }}
+                      >
+                        {p === "RUG" ? "🪤 RUG" : "🚀 MOON"}
+                      </button>
+                    ))}
+                  </div>
+
+                  <textarea
+                    placeholder="Why? Give your best 1-2 sentence argument..."
+                    value={argument}
+                    onChange={e => setArgument(e.target.value)}
+                    maxLength={200}
+                    rows={3}
+                    style={{ width:"100%", padding:"1rem", background:"rgba(255,255,255,0.05)", border:"1.5px solid rgba(255,255,255,0.15)", borderRadius:12, color:"white", fontFamily:"DM Mono", fontSize:"0.9rem", resize:"none", outline:"none", marginBottom:"1rem" }}
+                  />
+
+                  <button
+                    onClick={handleSubmitPick}
+                    disabled={!pick || !argument.trim() || loading}
+                    style={{ width:"100%", padding:"1rem", background:"linear-gradient(to right, #E37DF7, #9B6AF6)", border:"none", borderRadius:12, color:"white", fontFamily:"Outfit", fontWeight:700, fontSize:"1.1rem", cursor:"pointer", opacity: !pick || !argument.trim() || loading ? 0.5 : 1 }}
+                  >
+                    {loading ? <><span className="loader" /> {loadingMsg}</> : "🔒 Lock It In"}
+                  </button>
+
+                  {error && <div style={{ marginTop:"1rem", padding:"0.75rem", background:"rgba(239,68,68,0.15)", border:"1px solid rgba(239,68,68,0.4)", borderRadius:10, color:"#fca5a5", fontSize:"0.875rem" }}>{error}</div>}
+                </div>
+              ) : (
+                <div style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:20, padding:"3rem", textAlign:"center" }}>
+                  <div className="spin" style={{ display:"inline-block", width:56, height:56, border:"4px solid rgba(155,106,246,0.3)", borderTopColor:"#9B6AF6", borderRadius:"50%", marginBottom:"1.5rem" }} />
+                  <h3 style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"1.5rem", marginBottom:"0.5rem" }}>
+                    {opponentSubmitted ? "AI Oracle Judging..." : "Waiting for opponent..."}
+                  </h3>
+                  <p style={{ color:"#9ca3af" }}>
+                    {opponentSubmitted ? "The verdict is being prepared on-chain..." : "Your pick is locked. Waiting for the other player."}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── GAME OVER ──────────────────────────────────── */}
+          {screen === "gameOver" && gameState && (
+            <div className="screen" style={{ textAlign:"center", maxWidth:560, margin:"0 auto" }}>
+              <div style={{ background:"rgba(255,255,255,0.07)", border:"2px solid rgba(255,255,255,0.15)", borderRadius:24, padding:"3rem 2rem" }}>
+                <h2 className="shimmer" style={{ fontFamily:"Outfit", fontWeight:900, fontSize:"3.5rem", background:"linear-gradient(to right, #E37DF7, #9B6AF6, #110FFF)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", marginBottom:"0.5rem" }}>
+                  🎉 GAME OVER 🎉
+                </h2>
+                <p style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"2rem", marginBottom:"2rem" }}>{gameState.game_winner} Wins!</p>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:"2rem" }}>
+                  <div>
+                    <div style={{ color:"#9ca3af", marginBottom:"0.5rem" }}>{gameState.player1_name}</div>
+                    <div style={{ fontFamily:"DM Mono", fontWeight:700, fontSize:"3.5rem" }}>{gameState.player1_score}</div>
+                  </div>
+                  <div>
+                    <div style={{ color:"#9ca3af", marginBottom:"0.5rem" }}>{gameState.player2_name}</div>
+                    <div style={{ fontFamily:"DM Mono", fontWeight:700, fontSize:"3.5rem" }}>{gameState.player2_score}</div>
+                  </div>
+                </div>
+                <button onClick={reset} style={{ padding:"1rem 2.5rem", background:"linear-gradient(to right, #E37DF7, #9B6AF6)", border:"none", borderRadius:12, color:"white", fontFamily:"Outfit", fontWeight:700, fontSize:"1.1rem", cursor:"pointer" }}>
+                  Play Again
+                </button>
+              </div>
+            </div>
+          )}
+
+        </div>
+
+        {/* ── ROUND RESULT OVERLAY ───────────────────────── */}
+        {showResult && lastResult && (
+          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", backdropFilter:"blur(8px)", zIndex:50, display:"flex", alignItems:"center", justifyContent:"center", padding:"1.5rem" }}>
+            <div className="scale-in" style={{ background:"rgba(20,10,40,0.95)", border:"2px solid rgba(155,106,246,0.5)", borderRadius:24, padding:"2.5rem", maxWidth:560, width:"100%", textAlign:"center", position:"relative" }}>
+              <div style={{ position:"absolute", top:16, right:16 }}>
+                <img
+                  src={lastResult.outcome === "MOON" ? "/images/mochi-stonks-up.png" : "/images/mochi-stonks-down.png"}
+                  alt="Mochi"
+                  style={{ width:72, height:72 }}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                />
+              </div>
+
+              <h2 style={{ fontFamily:"Outfit", fontWeight:900, fontSize:"2rem", marginBottom:"0.75rem" }}>Round Result</h2>
+
+              <div style={{ fontFamily:"Outfit", fontWeight:900, fontSize:"3rem", marginBottom:"1rem", color: lastResult.outcome === "MOON" ? "#eab308" : "#ef4444" }}>
+                {lastResult.outcome === "MOON" ? "🚀 TO THE MOON!" : "🪤 IT'S A RUG!"}
+              </div>
+
+              <div style={{ background:"rgba(0,0,0,0.4)", borderRadius:12, padding:"1rem", marginBottom:"1rem" }}>
+                <p style={{ color:"#d1d5db", fontSize:"0.9rem", lineHeight:1.6 }}>{lastResult.explanation}</p>
+              </div>
+
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:"1rem" }}>
+                {[
+                  { name: gameState?.player1_name, pick: lastResult.player1_pick, arg: lastResult.player1_arg },
+                  { name: gameState?.player2_name, pick: lastResult.player2_pick, arg: lastResult.player2_arg },
+                ].map((p, i) => (
+                  <div key={i} style={{ background:"rgba(255,255,255,0.05)", borderRadius:12, padding:"1rem", textAlign:"left" }}>
+                    <div style={{ fontSize:"0.75rem", color:"#9ca3af", marginBottom:"0.25rem" }}>{p.name}</div>
+                    <div style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"1.25rem", marginBottom:"0.25rem", color: p.pick === "MOON" ? "#eab308" : "#ef4444" }}>
+                      {p.pick === "MOON" ? "🚀 MOON" : "🪤 RUG"}
+                    </div>
+                    <div style={{ fontSize:"0.75rem", color:"#9ca3af", fontStyle:"italic" }}>"{p.arg}"</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ fontFamily:"Outfit", fontWeight:700, fontSize:"1.1rem", marginBottom:"0.5rem" }}>
+                Round Winner: <span style={{ color:"#9B6AF6" }}>{lastResult.winner}</span>
+              </div>
+              <div style={{ fontSize:"0.85rem", color:"#9ca3af", fontStyle:"italic", marginBottom:"1.5rem" }}>{lastResult.reasoning}</div>
+
+              <button
+                onClick={() => setShowResult(false)}
+                style={{ width:"100%", padding:"1rem", background:"linear-gradient(to right, #E37DF7, #9B6AF6)", border:"none", borderRadius:12, color:"white", fontFamily:"Outfit", fontWeight:700, fontSize:"1.1rem", cursor:"pointer" }}
+              >
+                {gameState?.status === "finished" ? "See Final Results →" : "Next Round →"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Footer */}
+        <footer style={{ position:"relative", zIndex:1, textAlign:"center", paddingBottom:"2rem", marginTop:"4rem" }}>
+          <p style={{ fontSize:"0.75rem", color:"#4b5563", fontFamily:"DM Mono" }}>
+            Built with AI Consensus · GenLayer Playverse Challenge
+          </p>
+        </footer>
+
+      </div>
+    </>
   );
 }

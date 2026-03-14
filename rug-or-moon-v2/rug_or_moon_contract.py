@@ -1,274 +1,259 @@
+# v0.1.0
+# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
+
 import genlayer.gl as gl
 from genlayer import TreeMap, u256
 import json
-import random
+
+WINS_NEEDED = 3
 
 
-class RugOrMoon:
+class RugOrMoon(gl.Contract):
+
     game_count: u256
     games: TreeMap[u256, str]
 
     def __init__(self):
         self.game_count = u256(0)
-        self.games = TreeMap[u256, str]()
 
-    def _generate_project(self) -> str:
-        """Generate a fake crypto project with AI"""
-        def generate():
-            prompt = """Generate a fake crypto project as JSON with this EXACT structure (no extra text):
-{
-  "name": "ProjectName",
-  "ticker": "TICK",
-  "tagline": "One sentence tagline",
-  "flags": ["✅ green flag 1", "🚩 red flag 1", "✅ green flag 2", "🚩 red flag 2"],
-  "whitepaper_quote": "One sentence from fake whitepaper"
-}
+    @gl.public.write
+    def create_game(self, player_name: str) -> None:
+        game_id = int(self.game_count) + 1
+        self.game_count = u256(game_id)
 
-Make it absurd and funny. Mix 2 green flags (✅) with 2 red flags (🚩). Make it hard to tell if it's a rug or moon."""
-            return gl.nondet.exec_prompt(prompt)
-        
-        result = gl.eq_principle.prompt_non_comparative(
-            generate,
-            task="generate fake crypto project",
-            criteria="must be valid JSON"
+        def generate_project():
+            return gl.nondet.exec_prompt(
+                "You are the Oracle of Degen Finance — the most unhinged crypto analyst in the multiverse. "
+                "Generate a fake crypto project for a party game called RUG OR MOON. "
+                "Return ONLY this exact JSON and nothing else: "
+                '{"name": "ProjectName", "ticker": "TICK", "tagline": "one sentence tagline", '
+                '"flags": ["✅ green flag 1", "🚩 red flag 1", "✅ green flag 2", "🚩 red flag 2"], '
+                '"whitepaper_quote": "one sentence from fake whitepaper"} '
+                "Make it absurd and funny. Mix exactly 2 green flags (✅) and 2 red flags (🚩). "
+                "Make it genuinely hard to tell if it is a rug or moon. No extra text outside the JSON."
+            ).replace("```json", "").replace("```", "").strip()
+
+        project_str = gl.eq_principle.prompt_non_comparative(
+            generate_project,
+            task="Generate a fake absurd crypto project for the game",
+            criteria="Valid JSON with name, ticker, tagline, 4 flags (2 green 2 red), and whitepaper_quote"
         )
-        return result
 
-    def _generate_outcome(self, project_name: str) -> str:
-        """Determine if project is RUG or MOON"""
-        def generate():
-            prompt = f"""For the crypto project "{project_name}", decide if it's a RUG or MOON.
-Return JSON (no extra text):
-{{
-  "outcome": "RUG or MOON",
-  "explanation": "2-3 sentences explaining why"
-}}"""
-            return gl.nondet.exec_prompt(prompt)
-        
-        result = gl.eq_principle.prompt_non_comparative(
-            generate,
-            task="determine outcome",
-            criteria="must be valid JSON"
-        )
-        return result
+        try:
+            project_data = json.loads(project_str)
+        except Exception:
+            project_data = {
+                "name": "MoonDoge Inu Classic",
+                "ticker": "MDIC",
+                "tagline": "The last dog-themed coin you will ever need, probably",
+                "flags": ["✅ Anonymous team with vibes", "🚩 Whitepaper is just a JPEG", "✅ Elon once liked a tweet about dogs", "🚩 Liquidity locked for 24 hours"],
+                "whitepaper_quote": "We envision a world where every transaction is blessed by the spirit of Doge"
+            }
 
-    def _generate_ai_pick(self, project_data: dict) -> dict:
-        """Generate AI opponent's pick and argument"""
-        def generate():
-            prompt = f"""You're playing a game where you guess if crypto projects are rugs or moons.
-
-Project: {project_data['name']} (${project_data['ticker']})
-Tagline: {project_data['tagline']}
-Flags: {', '.join(project_data['flags'])}
-Whitepaper: {project_data['whitepaper_quote']}
-
-Make your pick. Return JSON (no extra text):
-{{
-  "pick": "RUG or MOON",
-  "argument": "1-2 sentences explaining your reasoning"
-}}"""
-            return gl.nondet.exec_prompt(prompt)
-        
-        result = gl.eq_principle.prompt_non_comparative(
-            generate,
-            task="generate AI pick",
-            criteria="must be valid JSON"
-        )
-        return json.loads(result)
-
-    def _judge_round(
-        self,
-        project_name: str,
-        outcome: str,
-        player1_pick: str,
-        player1_arg: str,
-        player2_pick: str,
-        player2_arg: str,
-        player1_name: str,
-        player2_name: str
-    ) -> str:
-        """Judge which player wins based on correctness and argument quality"""
-        def generate():
-            prompt = f"""Two players are debating if crypto project "{project_name}" is a RUG or MOON.
-
-ACTUAL OUTCOME: {outcome}
-
-{player1_name}'s pick: {player1_pick}
-{player1_name}'s argument: {player1_arg}
-
-{player2_name}'s pick: {player2_pick}
-{player2_name}'s argument: {player2_arg}
-
-Award the point to whoever:
-1. Got the outcome correct (RUG or MOON)
-2. Had the most convincing argument
-
-If both correct or both wrong, pick the better argument. Return JSON (no extra text):
-{{
-  "winner": "{player1_name} or {player2_name}",
-  "reasoning": "1-2 sentences explaining why they won"
-}}"""
-            return gl.nondet.exec_prompt(prompt)
-        
-        result = gl.eq_principle.prompt_non_comparative(
-            generate,
-            task="judge round winner",
-            criteria="must be valid JSON"
-        )
-        return result
-
-    def create_game(self, player_name: str, single_player: bool = False) -> str:
-        """Create a new game. If single_player=True, AI opponent auto-joins."""
-        self.game_count = u256(int(self.game_count) + 1)
-        game_id = self.game_count
-
-        project_json = self._generate_project()
-        project_data = json.loads(project_json)
-
-        game_state = {
-            "status": "waiting" if not single_player else "in_progress",
-            "single_player": single_player,
+        state = {
+            "game_id": game_id,
+            "status": "waiting",
             "player1_name": player_name,
             "player1_score": 0,
             "player1_pick": None,
             "player1_arg": None,
             "player1_submitted": False,
-            "player2_name": "AI Degen" if single_player else None,
+            "player2_name": None,
             "player2_score": 0,
             "player2_pick": None,
             "player2_arg": None,
             "player2_submitted": False,
-            "current_round": 1 if single_player else 0,
-            "current_project": project_data if single_player else None,
+            "current_round": 1,
+            "current_project": project_data,
             "last_round_result": None,
-            "winner": None
+            "game_winner": None,
+            "history": []
         }
+        self.games[u256(game_id)] = json.dumps(state)
 
-        self.games[game_id] = json.dumps(game_state)
-        return json.dumps({"game_id": int(game_id), "status": "created"})
-
+    @gl.public.write
     def join_game(self, game_id: int, player_name: str) -> None:
-        """Join an existing game as player 2"""
-        if u256(game_id) not in self.games:
-            raise Exception("Game not found")
+        key = u256(game_id)
+        if key not in self.games:
+            return
+        state = json.loads(self.games[key])
 
-        game_state = json.loads(self.games[u256(game_id)])
+        if state["status"] != "waiting":
+            return
+        if state["player2_name"] is not None:
+            return
+        if state["player1_name"] == player_name:
+            return
 
-        if game_state["status"] != "waiting":
-            raise Exception("Game not available")
+        state["player2_name"] = player_name
+        state["status"] = "in_progress"
+        self.games[key] = json.dumps(state)
 
-        if game_state.get("single_player"):
-            raise Exception("Cannot join single player game")
-
-        project_json = self._generate_project()
-        project_data = json.loads(project_json)
-
-        game_state["player2_name"] = player_name
-        game_state["status"] = "in_progress"
-        game_state["current_round"] = 1
-        game_state["current_project"] = project_data
-
-        self.games[u256(game_id)] = json.dumps(game_state)
-
+    @gl.public.write
     def submit_pick(self, game_id: int, player_name: str, pick: str, argument: str) -> None:
-        """Submit your RUG or MOON pick with reasoning"""
-        if u256(game_id) not in self.games:
-            raise Exception("Game not found")
+        key = u256(game_id)
+        if key not in self.games:
+            return
+        state = json.loads(self.games[key])
 
+        if state["status"] != "in_progress":
+            return
         if pick not in ["RUG", "MOON"]:
-            raise Exception("Pick must be 'RUG' or 'MOON'")
+            return
 
-        game_state = json.loads(self.games[u256(game_id)])
-
-        if game_state["status"] != "in_progress":
-            raise Exception("Game not in progress")
-
-        is_player1 = game_state["player1_name"] == player_name
-        is_player2 = game_state["player2_name"] == player_name
+        is_player1 = state["player1_name"] == player_name
+        is_player2 = state["player2_name"] == player_name
 
         if not is_player1 and not is_player2:
-            raise Exception("You're not in this game")
+            return
 
-        # Store player's pick
-        if is_player1:
-            game_state["player1_pick"] = pick
-            game_state["player1_arg"] = argument
-            game_state["player1_submitted"] = True
-        else:
-            game_state["player2_pick"] = pick
-            game_state["player2_arg"] = argument
-            game_state["player2_submitted"] = True
+        if is_player1 and not state["player1_submitted"]:
+            state["player1_pick"] = pick
+            state["player1_arg"] = argument
+            state["player1_submitted"] = True
 
-        # If single player, auto-generate AI opponent's pick
-        if game_state.get("single_player") and is_player1 and not game_state["player2_submitted"]:
-            ai_response = self._generate_ai_pick(game_state["current_project"])
-            game_state["player2_pick"] = ai_response["pick"]
-            game_state["player2_arg"] = ai_response["argument"]
-            game_state["player2_submitted"] = True
+        if is_player2 and not state["player2_submitted"]:
+            state["player2_pick"] = pick
+            state["player2_arg"] = argument
+            state["player2_submitted"] = True
 
-        # If both submitted, judge the round
-        if game_state["player1_submitted"] and game_state["player2_submitted"]:
-            # Get the actual outcome
-            outcome_json = self._generate_outcome(game_state["current_project"]["name"])
-            outcome_data = json.loads(outcome_json)
+        if state["player1_submitted"] and state["player2_submitted"]:
+            p1 = state["player1_name"]
+            p2 = state["player2_name"]
+            p1_pick = state["player1_pick"]
+            p2_pick = state["player2_pick"]
+            p1_arg = state["player1_arg"]
+            p2_arg = state["player2_arg"]
+            project = state["current_project"]
+            project_name = project["name"]
 
-            # Judge who wins
-            judge_json = self._judge_round(
-                game_state["current_project"]["name"],
-                outcome_data["outcome"],
-                game_state["player1_pick"],
-                game_state["player1_arg"],
-                game_state["player2_pick"],
-                game_state["player2_arg"],
-                game_state["player1_name"],
-                game_state["player2_name"]
+            def generate_outcome():
+                return gl.nondet.exec_prompt(
+                    f"You are the Oracle of Degen Finance. Decide the fate of crypto project '{project_name}'. "
+                    f"Is it a RUG (scam, crashes to zero) or a MOON (pumps massively)? "
+                    f"Be dramatic. Return ONLY this exact JSON and nothing else: "
+                    f'{{\"outcome\": \"RUG or MOON\", \"explanation\": \"2-3 dramatic sentences explaining why\"}}'
+                ).replace("```json", "").replace("```", "").strip()
+
+            outcome_str = gl.eq_principle.prompt_non_comparative(
+                generate_outcome,
+                task="Determine if the crypto project is a RUG or MOON",
+                criteria="JSON with outcome being exactly RUG or MOON and a dramatic explanation"
             )
-            judge_data = json.loads(judge_json)
 
-            # Award point
-            if judge_data["winner"] == game_state["player1_name"]:
-                game_state["player1_score"] += 1
-            else:
-                game_state["player2_score"] += 1
+            try:
+                outcome_data = json.loads(outcome_str)
+                outcome = outcome_data.get("outcome", "RUG")
+                explanation = outcome_data.get("explanation", "The Oracle has spoken.")
+                if outcome not in ["RUG", "MOON"]:
+                    outcome = "RUG"
+            except Exception:
+                outcome = "RUG"
+                explanation = "The Oracle's crystal ball shattered. It was definitely a rug."
 
-            # Store round result
-            game_state["last_round_result"] = {
-                "outcome": outcome_data["outcome"],
-                "explanation": outcome_data["explanation"],
-                "winner": judge_data["winner"],
-                "reasoning": judge_data["reasoning"],
-                "player1_pick": game_state["player1_pick"],
-                "player2_pick": game_state["player2_pick"]
+            def judge_round():
+                return gl.nondet.exec_prompt(
+                    f"Two players debated if crypto project '{project_name}' was a RUG or MOON. "
+                    f"The actual outcome was: {outcome}. "
+                    f"{p1} picked {p1_pick} and argued: {p1_arg} "
+                    f"{p2} picked {p2_pick} and argued: {p2_arg} "
+                    f"Award the point to whoever got the outcome correct AND had the more convincing argument. "
+                    f"If both correct or both wrong, pick the better argument. "
+                    f"Return ONLY this exact JSON and nothing else: "
+                    f'{{\"winner\": \"NAME\", \"reasoning\": \"1-2 sentences explaining why they won\"}} '
+                    f"Replace NAME with exactly {p1} or exactly {p2}. No other text outside the JSON."
+                ).replace("```json", "").replace("```", "").strip()
+
+            judgment_str = gl.eq_principle.prompt_non_comparative(
+                judge_round,
+                task="Judge which player wins the round based on correct pick and argument quality",
+                criteria=f"JSON with winner being exactly '{p1}' or '{p2}' and reasoning under 50 words"
+            )
+
+            try:
+                judgment = json.loads(judgment_str)
+                winner = str(judgment.get("winner", "")).strip()
+                reasoning = str(judgment.get("reasoning", "The Oracle has decided."))
+                if winner not in [p1, p2]:
+                    if p1.lower() in winner.lower():
+                        winner = p1
+                    elif p2.lower() in winner.lower():
+                        winner = p2
+                    else:
+                        winner = p1
+            except Exception:
+                winner = p1
+                reasoning = "The Oracle malfunctioned. Point awarded by cosmic coin flip."
+
+            state["last_round_result"] = {
+                "outcome": outcome,
+                "explanation": explanation,
+                "winner": winner,
+                "reasoning": reasoning,
+                "player1_pick": p1_pick,
+                "player2_pick": p2_pick
             }
 
-            # Check if game over
-            if game_state["player1_score"] >= 3 or game_state["player2_score"] >= 3:
-                game_state["status"] = "finished"
-                game_state["winner"] = (
-                    game_state["player1_name"]
-                    if game_state["player1_score"] >= 3
-                    else game_state["player2_name"]
+            state["history"].append(state["last_round_result"])
+
+            if winner == p1:
+                state["player1_score"] += 1
+            else:
+                state["player2_score"] += 1
+
+            if state["player1_score"] >= WINS_NEEDED or state["player2_score"] >= WINS_NEEDED:
+                state["status"] = "finished"
+                state["game_winner"] = (
+                    p1 if state["player1_score"] >= WINS_NEEDED else p2
                 )
             else:
-                # Next round
-                game_state["current_round"] += 1
-                project_json = self._generate_project()
-                game_state["current_project"] = json.loads(project_json)
-                game_state["player1_submitted"] = False
-                game_state["player2_submitted"] = False
-                game_state["player1_pick"] = None
-                game_state["player1_arg"] = None
-                game_state["player2_pick"] = None
-                game_state["player2_arg"] = None
+                next_round = state["current_round"] + 1
 
-        self.games[u256(game_id)] = json.dumps(game_state)
+                def generate_next_project():
+                    return gl.nondet.exec_prompt(
+                        f"Generate a NEW fake crypto project for round {next_round} of RUG OR MOON. "
+                        f"The previous project was {project_name}. Make this one completely different and even more absurd. "
+                        f"Return ONLY this exact JSON and nothing else: "
+                        f'{{\"name\": \"ProjectName\", \"ticker\": \"TICK\", \"tagline\": \"one sentence tagline\", '
+                        f'\"flags\": [\"✅ green flag 1\", \"🚩 red flag 1\", \"✅ green flag 2\", \"🚩 red flag 2\"], '
+                        f'\"whitepaper_quote\": \"one sentence from fake whitepaper\"}} '
+                        f"No extra text outside the JSON."
+                    ).replace("```json", "").replace("```", "").strip()
 
+                next_project_str = gl.eq_principle.prompt_non_comparative(
+                    generate_next_project,
+                    task="Generate a new fake crypto project different from the previous one",
+                    criteria="Valid JSON with name, ticker, tagline, 4 flags (2 green 2 red), and whitepaper_quote"
+                )
+
+                try:
+                    state["current_project"] = json.loads(next_project_str)
+                except Exception:
+                    state["current_project"] = {
+                        "name": "SafeRocket Finance",
+                        "ticker": "SRKT",
+                        "tagline": "100% safe, 1000% rocket, 0% explanation",
+                        "flags": ["✅ Team fully doxxed (first names only)", "🚩 Contract has a special admin function", "✅ Listed on 4 exchanges (all unnamed)", "🚩 Telegram has 50k members, all joined today"],
+                        "whitepaper_quote": "Safety is our rocket fuel and rockets are our safety net"
+                    }
+
+                state["current_round"] = next_round
+                state["player1_submitted"] = False
+                state["player2_submitted"] = False
+                state["player1_pick"] = None
+                state["player1_arg"] = None
+                state["player2_pick"] = None
+                state["player2_arg"] = None
+
+        self.games[key] = json.dumps(state)
+
+    @gl.public.view
     def get_game(self, game_id: int) -> str:
-        """Get current game state"""
-        if u256(game_id) not in self.games:
-            raise Exception("Game not found")
-        return self.games[u256(game_id)]
+        key = u256(game_id)
+        if key in self.games:
+            return self.games[key]
+        return ""
 
+    @gl.public.view
     def get_game_count(self) -> int:
-        """Get total number of games created"""
         return int(self.game_count)

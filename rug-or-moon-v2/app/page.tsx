@@ -5,7 +5,7 @@ import { createClient, createAccount } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 
 // ⚡ PASTE YOUR CONTRACT ADDRESS HERE ⚡
-const CONTRACT_ADDRESS = "PASTE_YOUR_CONTRACT_ADDRESS_HERE";
+const CONTRACT_ADDRESS = "0x9F6C0e7b0240c6DB4Fe402F548FB73fC3DC5415D";
 
 const client = createClient({
   chain: studionet,
